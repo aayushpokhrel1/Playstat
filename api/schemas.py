@@ -32,6 +32,16 @@ class PredictionOut(BaseModel):
     actual: int | None
 
 
+class BoxScoreOut(BaseModel):
+    player_id: int
+    player_name: str
+    game_id: int
+    date: str
+    points: int | None
+    rebounds: int | None
+    assists: int | None
+
+
 class ModelPerformanceOut(BaseModel):
     stat_type: str
     mae: float

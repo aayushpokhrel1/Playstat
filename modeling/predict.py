@@ -3,7 +3,7 @@ import argparse
 from sqlalchemy import text
 
 from ingestion import db
-from modeling.train import STAT_CONFIG, fit_models, load_dataset, model_version
+from modeling.train import STAT_CONFIG, fit_models, load_dataset, model_version, predicted_std_from_quantiles
 
 
 def predict_for_games(engine, game_ids, stat):
@@ -22,13 +22,13 @@ def predict_for_games(engine, game_ids, stat):
         print("No rows found for the given game_ids — do they have features computed? (see modeling/features.py)")
         return
 
-    mean_model, q16_model, q84_model = fit_models(train_df, stat)
+    mean_model, q16_model, q84_model, c16, c84 = fit_models(train_df, stat)
 
     X = predict_df[feature_cols]
     predicted_mean = mean_model.predict(X)
     q16 = q16_model.predict(X)
     q84 = q84_model.predict(X)
-    predicted_std = [max(hi - lo, 0) / 2 for lo, hi in zip(q16, q84)]
+    predicted_std = [predicted_std_from_quantiles(lo, hi, c16, c84) for lo, hi in zip(q16, q84)]
 
     rows = 0
     with engine.begin() as conn:

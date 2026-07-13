@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import date as date_type
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,7 @@ from sqlalchemy import text
 
 from api.schemas import (
     BacktestRunOut,
+    BoxScoreOut,
     EdgeOut,
     GameLogEntry,
     ModelPerformanceOut,
@@ -139,6 +141,33 @@ def model_performance():
             )
         ).fetchall()
     return [ModelPerformanceOut(stat_type=r[0], mae=float(r[1]), n=r[2]) for r in rows]
+
+
+@app.get("/box-scores", response_model=list[BoxScoreOut])
+def box_scores(date: date_type):
+    """Final (status='FT') box scores for a given date, for external consumers
+    (e.g. Budgerr's bet auto-settlement) to cross-reference against open bet legs.
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT pgs.player_id, p.name, pgs.game_id, g.date, pgs.points, pgs.rebounds, pgs.assists
+                FROM player_game_stats pgs
+                JOIN players p ON p.player_id = pgs.player_id
+                JOIN games g ON g.game_id = pgs.game_id
+                WHERE g.date = :date AND g.status = 'FT'
+                """
+            ),
+            {"date": date},
+        ).fetchall()
+    return [
+        BoxScoreOut(
+            player_id=r[0], player_name=r[1], game_id=r[2], date=str(r[3]),
+            points=r[4], rebounds=r[5], assists=r[6],
+        )
+        for r in rows
+    ]
 
 
 @app.get("/edges", response_model=list[EdgeOut])

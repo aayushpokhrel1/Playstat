@@ -15,7 +15,7 @@ def run_backtest(engine, stat):
         return
 
     train_df, test_df = split_train_test(df)
-    mean_model, _, _ = fit_models(train_df, stat)
+    mean_model, _, _, _, _ = fit_models(train_df, stat)
 
     X_test = test_df[feature_cols]
     y_test = test_df[target_col]

@@ -144,6 +144,8 @@ All 8 phases are built:
 
 **Current data state**: `model_predictions` and `backtest_runs` have real historical data (the model has actually been trained and backtested). `prop_lines`, `edges`, and `parlay_recommendations` are empty — the code path is built and tested, but there's no live odds data flowing yet (season/odds-availability timing, not a bug). `/edges` will return real rows once odds ingestion actually runs against current lines.
 
+**Calibration status**: `modeling/backtest.py`'s coverage checks originally found the q16 (16th-percentile) quantile model meaningfully miscalibrated — empirical coverage ran 25–33% against a nominal 16% target across all three stats, meaning `predicted_std` understated how often low outcomes actually happen. Diagnosed before fixing: tried five XGBoost hyperparameter configs, coverage barely moved, ruling out overfitting — the real cause is structural, no current feature signals the actual drivers of unusually low stat lines (foul trouble, blowouts, load management). Fixed with split-conformal calibration in `modeling/train.py`'s `fit_models` (a held-out calibration slice measures and corrects the raw quantile models' error, centralized in `predicted_std_from_quantiles` so `predict.py`/`calibration.py`/`backtest.py` all apply it identically). Result: rebounds improved from ~26% to ~19.5% coverage_16, points improved modestly, but **assists is still an open issue** — it's heavily zero-inflated (many exact 0s/1s), so the correction lands on a flat, tied region of the residual distribution and computes to ~0. Worth revisiting with a discreteness-aware calibration technique (or better features) if assists edges matter once live betting starts.
+
 ---
 
 ## 9. Tech Stack Summary

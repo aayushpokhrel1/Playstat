@@ -1,5 +1,6 @@
 import argparse
 
+import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error
@@ -59,6 +60,14 @@ def split_train_test(df, test_frac=0.2):
 
 
 def fit_models(train_df, stat):
+    """Fits the mean model on all of train_df, but the quantile models get a
+    split-conformal calibration correction — raw XGBoost quantile regression on
+    this dataset is meaningfully miscalibrated (see modeling/calibration.py findings:
+    q16 empirical coverage runs 25-33% vs. the nominal 16%), and hyperparameter
+    tuning alone doesn't fix it (tried several configs, coverage barely moved).
+    Holding out a calibration slice and correcting for the measured residual
+    quantile is the standard fix for this failure mode.
+    """
     target_col, feature_cols = STAT_CONFIG[stat]
     X = train_df[feature_cols]
     y = train_df[target_col]
@@ -66,17 +75,35 @@ def fit_models(train_df, stat):
     mean_model = xgb.XGBRegressor(objective="reg:squarederror", n_estimators=100, max_depth=4)
     mean_model.fit(X, y)
 
+    proper_train, cal_df = split_train_test(train_df)
+    X_pt, y_pt = proper_train[feature_cols], proper_train[target_col]
+    X_cal, y_cal = cal_df[feature_cols], cal_df[target_col]
+
     q16_model = xgb.XGBRegressor(
         objective="reg:quantileerror", quantile_alpha=0.16, n_estimators=100, max_depth=4
     )
-    q16_model.fit(X, y)
+    q16_model.fit(X_pt, y_pt)
 
     q84_model = xgb.XGBRegressor(
         objective="reg:quantileerror", quantile_alpha=0.84, n_estimators=100, max_depth=4
     )
-    q84_model.fit(X, y)
+    q84_model.fit(X_pt, y_pt)
 
-    return mean_model, q16_model, q84_model
+    c16 = np.quantile(y_cal.values - q16_model.predict(X_cal), 0.16)
+    c84 = np.quantile(y_cal.values - q84_model.predict(X_cal), 0.84)
+
+    return mean_model, q16_model, q84_model, c16, c84
+
+
+def predicted_std_from_quantiles(q16_pred, q84_pred, c16, c84):
+    """Applies the calibration correction, then derives predicted_std from the
+    corrected ~68% interval. max(...,0) guards against quantile crossing —
+    q84_pred isn't structurally guaranteed to exceed q16_pred since the two
+    quantile models are trained independently.
+    """
+    corrected_lo = q16_pred + c16
+    corrected_hi = q84_pred + c84
+    return max(corrected_hi - corrected_lo, 0) / 2
 
 
 def main():
@@ -97,7 +124,8 @@ def main():
     train_df, test_df = split_train_test(df)
     print(f"train: {len(train_df)} rows, test: {len(test_df)} rows (cutoff date: {test_df['date'].min().date()})")
 
-    mean_model, q16_model, q84_model = fit_models(train_df, stat)
+    mean_model, q16_model, q84_model, c16, c84 = fit_models(train_df, stat)
+    print(f"calibration correction ({stat}): c16={c16:.2f}, c84={c84:.2f}")
 
     X_test = test_df[feature_cols]
     y_test = test_df[target_col]
@@ -105,10 +133,10 @@ def main():
     mae = mean_absolute_error(y_test, preds)
     print(f"held-out MAE ({stat}): {mae:.2f}")
 
-    q16_preds = q16_model.predict(X_test)
-    q84_preds = q84_model.predict(X_test)
+    q16_preds = q16_model.predict(X_test) + c16
+    q84_preds = q84_model.predict(X_test) + c84
     crossed = (q84_preds < q16_preds).sum()
-    print(f"quantile crossing (q84 < q16) on {crossed}/{len(X_test)} test rows")
+    print(f"quantile crossing (q84 < q16, post-calibration) on {crossed}/{len(X_test)} test rows")
 
     print(f"held-out test game_ids: {sorted(test_df['game_id'].unique().tolist())}")
 

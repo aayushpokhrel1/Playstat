@@ -17,13 +17,15 @@ def check_coverage(engine, stat):
         return None
 
     train_df, test_df = split_train_test(df)
-    _, q16_model, q84_model = fit_models(train_df, stat)
+    _, q16_model, q84_model, c16, c84 = fit_models(train_df, stat)
 
     X_test = test_df[feature_cols]
     y_test = test_df[target_col]
 
-    q16_preds = q16_model.predict(X_test)
-    q84_preds = q84_model.predict(X_test)
+    # Applying the same calibration correction fit_models computed, so this checks
+    # what actually ships in model_predictions, not the raw uncalibrated quantiles.
+    q16_preds = q16_model.predict(X_test) + c16
+    q84_preds = q84_model.predict(X_test) + c84
 
     coverage_16 = (y_test.values <= q16_preds).mean()
     coverage_84 = (y_test.values <= q84_preds).mean()
