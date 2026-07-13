@@ -59,6 +59,23 @@ def split_train_test(df, test_frac=0.2):
     return train_df, test_df
 
 
+def _jittered_quantile(residuals, quantile, n_draws=200, seed=0):
+    """Quantile of residuals, averaged over many U(-0.5, 0.5) jitters.
+
+    points/rebounds/assists are all discrete counts, so identical predicted
+    values against nearby integer actuals pile residuals into an exact tie
+    (assists is the worst case: 267/1134 calibration residuals landed on
+    precisely 0, an atom that swallowed the whole 10th-30th percentile band).
+    A plain np.quantile call on ties like that returns 0 regardless of which
+    correction is actually needed. Jittering breaks the ties so the quantile
+    reflects where the tied mass should fall within the interval; averaging
+    many draws keeps a single unlucky jitter from swinging the correction.
+    """
+    rng = np.random.default_rng(seed)
+    draws = [np.quantile(residuals + rng.uniform(-0.5, 0.5, size=len(residuals)), quantile) for _ in range(n_draws)]
+    return float(np.mean(draws))
+
+
 def fit_models(train_df, stat):
     """Fits the mean model on all of train_df, but the quantile models get a
     split-conformal calibration correction — raw XGBoost quantile regression on
@@ -89,8 +106,8 @@ def fit_models(train_df, stat):
     )
     q84_model.fit(X_pt, y_pt)
 
-    c16 = np.quantile(y_cal.values - q16_model.predict(X_cal), 0.16)
-    c84 = np.quantile(y_cal.values - q84_model.predict(X_cal), 0.84)
+    c16 = _jittered_quantile(y_cal.values - q16_model.predict(X_cal), 0.16)
+    c84 = _jittered_quantile(y_cal.values - q84_model.predict(X_cal), 0.84)
 
     return mean_model, q16_model, q84_model, c16, c84
 
