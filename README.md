@@ -115,28 +115,34 @@ This is a constrained search problem (think: subset selection with a target-prod
 
 ## 7. Dashboard / Frontend
 
-Three options, not mutually exclusive:
+Built as a FastAPI backend (`api/`) + Next.js web dashboard (`web/`) — the "web app" option below is what got built; Tableau and the React Native port weren't pursued for this project.
 
-| Option | Pros | Cons |
-|---|---|---|
-| **Tableau** (reuse original) | Familiar, resume-consistent | Not live/interactive for game-day use |
-| **Web app** (Streamlit for fast MVP, or React/Next.js for a polished portfolio piece) | Live refresh, interactive, deployable | More build time |
-| **React Native Android app** | You're already porting the dashboard into this — could be the natural home for the "check before tipoff" use case, on your phone | Depends on how far along that port is |
+| Option (considered) | Verdict |
+|---|---|
+| **Tableau** (reuse original) | Not used — not live/interactive enough for game-day use |
+| **Web app** (Next.js) | **Built** — `api/main.py` serves teams/players/stats/predictions/edges/parlay-recommendations/backtest-history; `web/` is the Next.js frontend |
+| **React Native Android app** | Not used for this project |
 
-Given you're already mid-port on the React Native version, that's probably the most natural landing spot for the live/game-night view, with the web or Tableau version as the "deep dive" analysis layer.
+## 7.1 External consumers (Budgerr integration)
+
+`GET /edges` and `GET /parlay-recommendations` are also consumed by a separate project, [Budgerr](https://github.com/aayushpokhrel1/Budgerr) (a personal budgeting app with betting baked in) — its bet quick-entry form pre-fills a leg's player/stat/line/side/odds straight from `/edges`. This is a one-way, read-only dependency: no shared database, no write access back into playstat, just an HTTP call from Budgerr's frontends. `CORSMiddleware` is configured (`CORS_ORIGINS` env var) specifically so Budgerr's browser-based frontend can call it directly.
 
 ---
 
-## 8. Build Order (suggested phases)
+## 8. Build Order — status
 
-1. **Data pipeline**: schema + API-Basketball ingestion + historical backfill
-2. **Odds integration**: pick an odds API, ingest prop lines
-3. **Baseline model**: start with points only, get the full pipeline working end to end
-4. **Calibration + edge detection**: validate before trusting outputs
-5. **Extend models**: rebounds, assists
-6. **Parlay optimizer**: combinatorial search + correlation handling
-7. **Dashboard**: wire predictions/edges into whichever frontend you pick
-8. **Backtest loop**: track predicted vs. actual over time to see if the edge is real or noise
+All 8 phases are built:
+
+1. ✅ **Data pipeline**: schema + API-Basketball ingestion + historical backfill
+2. ✅ **Odds integration**: odds API client + prop line ingestion (`ingestion/odds_client.py`, `odds_ingest.py`)
+3. ✅ **Baseline model**: points model, full pipeline working end to end
+4. ✅ **Calibration + edge detection**: `modeling/calibration.py`, `modeling/edges.py`
+5. ✅ **Extend models**: rebounds, assists (`modeling/features.py`, `predict.py`, `train.py`)
+6. ✅ **Parlay optimizer**: `optimizer/parlay.py`
+7. ✅ **Dashboard**: FastAPI + Next.js, see Section 7
+8. ✅ **Backtest loop**: `modeling/backtest.py`, results accumulate in `backtest_runs`
+
+**Current data state**: `model_predictions` and `backtest_runs` have real historical data (the model has actually been trained and backtested). `prop_lines`, `edges`, and `parlay_recommendations` are empty — the code path is built and tested, but there's no live odds data flowing yet (season/odds-availability timing, not a bug). `/edges` will return real rows once odds ingestion actually runs against current lines.
 
 ---
 
@@ -145,10 +151,18 @@ Given you're already mid-port on the React Native version, that's probably the m
 - **Backend**: Python (pandas, scikit-learn / XGBoost / LightGBM), FastAPI to serve predictions to a frontend
 - **Database**: PostgreSQL
 - **Orchestration**: simple scheduled scripts (cron) to start; Airflow only if this grows past a solo project
-- **Frontend**: Streamlit (fastest MVP) → React/Next.js or React Native (polish/mobile)
+- **Frontend**: Next.js
+
+---
+
+## 10. Running it
+
+The API runs as an always-on `launchd` service (`com.playstat.api`, configured outside this repo at `~/Library/LaunchAgents/`), not a manually-started dev server — it survives logout/reboot and restarts automatically on crash, same setup as Budgerr's backend. Logs go to `api.log`/`api.error.log` at the repo root (gitignored).
+
+The project lives under `~/dev/playstat`, not `~/Documents` — `~/Documents` is iCloud-synced on this machine, which caused intermittent file-read deadlocks for `launchd`-spawned processes specifically.
 
 ---
 
 ## Next Step
 
-Pick a phase from Section 8 and we can start building — Claude Code is the right tool for the actual implementation given the multi-file, multi-service nature of this (data pipeline, models, DB, frontend all as real code, not chat snippets).
+The build-order phases are done. What's left is more data/ops than code: get current-season odds actually flowing through `ingestion/odds_ingest.py` so `prop_lines`/`edges`/`parlay_recommendations` stop being empty, and decide whether/how to deploy this beyond localhost.
