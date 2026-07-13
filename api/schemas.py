@@ -36,3 +36,35 @@ class ModelPerformanceOut(BaseModel):
     stat_type: str
     mae: float
     n: int
+
+
+class EdgeOut(BaseModel):
+    player_id: int
+    player_name: str
+    team_id: int | None
+    game_id: int
+    date: str
+    stat_type: str
+    side: str
+    line_value: float
+    odds: int
+    model_prob: float
+    edge: float
+
+
+class ParlayLeg(BaseModel):
+    player_id: int
+    game_id: int
+    stat_type: str
+    side: str
+    model_prob: float
+    odds: int
+
+
+class ParlayRecommendationOut(BaseModel):
+    parlay_id: int
+    created_at: str
+    target_payout: float
+    joint_prob: float
+    combined_odds: float
+    legs: list[ParlayLeg]

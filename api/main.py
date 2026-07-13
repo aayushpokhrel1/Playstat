@@ -1,7 +1,18 @@
+import json
+
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
-from api.schemas import GameLogEntry, ModelPerformanceOut, PlayerOut, PredictionOut, TeamOut
+from api.schemas import (
+    EdgeOut,
+    GameLogEntry,
+    ModelPerformanceOut,
+    ParlayLeg,
+    ParlayRecommendationOut,
+    PlayerOut,
+    PredictionOut,
+    TeamOut,
+)
 from ingestion.db import get_engine
 
 app = FastAPI(title="Playstat API")
@@ -114,3 +125,70 @@ def model_performance():
             )
         ).fetchall()
     return [ModelPerformanceOut(stat_type=r[0], mae=float(r[1]), n=r[2]) for r in rows]
+
+
+@app.get("/edges", response_model=list[EdgeOut])
+def list_edges():
+    """Current positive-edge legs, for external consumers (e.g. Budgerr's bet
+    quick-entry pre-fill) — empty until prop_lines has real data (~October).
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT e.player_id, p.name, p.team_id, e.game_id, g.date, e.stat_type, e.side,
+                       pl.line_value,
+                       CASE e.side WHEN 'over' THEN pl.over_odds ELSE pl.under_odds END AS odds,
+                       e.model_prob, e.edge
+                FROM edges e
+                JOIN players p ON p.player_id = e.player_id
+                JOIN games g ON g.game_id = e.game_id
+                JOIN (
+                    SELECT DISTINCT ON (player_id, game_id, stat_type)
+                        player_id, game_id, stat_type, line_value, over_odds, under_odds
+                    FROM prop_lines
+                    ORDER BY player_id, game_id, stat_type, pulled_at DESC
+                ) pl ON pl.player_id = e.player_id AND pl.game_id = e.game_id AND pl.stat_type = e.stat_type
+                WHERE e.edge > 0
+                ORDER BY e.edge DESC
+                """
+            )
+        ).fetchall()
+    return [
+        EdgeOut(
+            player_id=r[0], player_name=r[1], team_id=r[2], game_id=r[3], date=str(r[4]),
+            stat_type=r[5], side=r[6], line_value=r[7], odds=r[8], model_prob=r[9], edge=r[10],
+        )
+        for r in rows
+    ]
+
+
+@app.get("/parlay-recommendations", response_model=list[ParlayRecommendationOut])
+def list_parlay_recommendations(limit: int = 10):
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
+                FROM parlay_recommendations
+                ORDER BY created_at DESC, joint_prob DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).fetchall()
+
+    results = []
+    for r in rows:
+        legs_raw = r[5] if isinstance(r[5], list) else json.loads(r[5])
+        results.append(
+            ParlayRecommendationOut(
+                parlay_id=r[0],
+                created_at=str(r[1]),
+                target_payout=r[2],
+                joint_prob=r[3],
+                combined_odds=r[4],
+                legs=[ParlayLeg(**leg) for leg in legs_raw],
+            )
+        )
+    return results
