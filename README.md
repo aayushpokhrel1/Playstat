@@ -163,8 +163,35 @@ The API runs as an always-on `launchd` service (`com.playstat.api`, configured o
 
 The project lives under `~/dev/playstat`, not `~/Documents` — `~/Documents` is iCloud-synced on this machine, which caused intermittent file-read deadlocks for `launchd`-spawned processes specifically.
 
+The `com.playstat.api` service does **not** run with `--reload` — code changes to `api/` require a manual restart to take effect: `launchctl kickstart -k gui/$(id -u)/com.playstat.api`. Forgetting this step makes it look like a change didn't work when it's actually just not loaded yet.
+
+---
+
+## 11. Known Issues & Follow-ups
+
+Everything below is a known, already-diagnosed gap — not a surprise to rediscover. Grouped by area so a fresh session (or a different person) can pick any of these up without needing the history that led here.
+
+**Data / ingestion**
+- **2023-24 backfill still filling in**: 264 of 1,310 finished games have box scores as of this writing. The daily `launchd` job (`com.playstat.backfill`, chained `backfill --only stats && modeling.features && modeling.backtest`) adds more automatically and self-disables via `launchctl unload` once every game has stats — no action needed, just time.
+- **`prop_lines`/`edges`/`parlay_recommendations` are empty**: genuinely blocked on the NBA season starting (~October 2026) and `ingestion/odds_ingest.py` actually finding live events. All the code is built and tested against synthetic data; nothing here is unbuilt, it's unexercised.
+- **The 2026-27 season likely won't load on the free API-Basketball plan** — already hit this exact wall with 2025-26 (free tier only covers 2022–2024). Will need a paid plan when that season needs backfilling, or another provider.
+- **Feature gaps**: `player_game_stats.usage_rate` was never populated (API-Basketball's box score endpoint doesn't expose the underlying FGA/FTA/TOV the formula needs), there's no injury-report ingestion, and `teams.pace`/`teams.def_rating` are still NULL — `opp_def_rating` is a simple "opponent's points allowed" proxy, not a real pace-adjusted rating. All three are README §4 features that were never built, not features that broke.
+
+**Modeling**
+- **Assists calibration is still broken** (see §8) — heavily zero-inflated distribution defeats the split-conformal correction that fixed points/rebounds. Needs either a discreteness-aware calibration technique or better features, not just a rerun.
+- **Many predictions share an identical `predicted_mean`** across different players — e.g., 27 different players had the exact same predicted points value in one check. Very likely XGBoost routing players who lack rolling-average history (early in a season, or anyone without 5-10 prior games loaded yet) to the same leaf nodes, producing identical output. Not investigated further; worth a look once more of the season is backfilled and this either resolves itself or clearly doesn't.
+- **XGBoost isn't seeded** (no `random_state` set anywhere) — exact MAE/calibration numbers will vary slightly between identical runs. Expected noise from the library's internal stochasticity, not a bug, but don't be alarmed if two `modeling.calibration` runs back-to-back don't match exactly.
+
+**Dashboard / API**
+- **No edge/parlay UI in the Next.js dashboard** — `web/` only has team/player browsing and predictions-vs-actuals (Phase 7 deliberately skipped this since `edges`/`parlay_recommendations` were empty at build time). Worth adding once real data exists to show.
+- **No auth on any API endpoint** — fine for localhost-only dev, not fine before either Playstat's or Budgerr's API leaves personal/local use.
+- **No backtest-trend chart** — only a handful of `backtest_runs` rows exist so far; a chart showing MAE/calibration over time is worth building once a couple weeks of daily runs have accumulated enough points to show a real trend.
+
+**Budgerr integration**
+- **Budgerr-side work hasn't started** — Playstat exposes `/edges`, `/parlay-recommendations`, and `/box-scores` (for auto-settlement), all verified working, but nothing in the Budgerr repo calls them yet. That's Budgerr's own build-order item 10, picked up whenever ready in that repo.
+
 ---
 
 ## Next Step
 
-The build-order phases are done. What's left is more data/ops than code: get current-season odds actually flowing through `ingestion/odds_ingest.py` so `prop_lines`/`edges`/`parlay_recommendations` stop being empty, and decide whether/how to deploy this beyond localhost.
+The build-order phases are all built. What's left is mostly data/ops and the follow-ups above, not new architecture: get current-season odds actually flowing through `ingestion/odds_ingest.py` so `prop_lines`/`edges`/`parlay_recommendations` stop being empty, work through §11's list as it becomes relevant, and decide whether/how to deploy this beyond localhost.
