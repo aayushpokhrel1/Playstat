@@ -101,3 +101,17 @@ CREATE TABLE parlay_recommendations (
     joint_prob      NUMERIC,
     combined_odds   NUMERIC
 );
+
+-- Accumulating history of backtest snapshots, so accuracy/calibration trends
+-- over time are queryable rather than only ever printed to stdout and lost.
+CREATE TABLE backtest_runs (
+    run_id          SERIAL PRIMARY KEY,
+    run_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    stat_type       TEXT NOT NULL,
+    model_version   TEXT NOT NULL,
+    n_test_games    INTEGER,
+    mae             NUMERIC,
+    coverage_16     NUMERIC,
+    coverage_84     NUMERIC
+);
+CREATE INDEX idx_backtest_runs_stat_type ON backtest_runs(stat_type, run_at);

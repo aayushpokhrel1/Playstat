@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
 from api.schemas import (
+    BacktestRunOut,
     EdgeOut,
     GameLogEntry,
     ModelPerformanceOut,
@@ -192,3 +193,25 @@ def list_parlay_recommendations(limit: int = 10):
             )
         )
     return results
+
+
+@app.get("/backtest-history", response_model=list[BacktestRunOut])
+def backtest_history(stat: str | None = None):
+    query = "SELECT run_id, run_at, stat_type, model_version, n_test_games, mae, coverage_16, coverage_84 FROM backtest_runs"
+    params = {}
+    if stat is not None:
+        query += " WHERE stat_type = :stat"
+        params["stat"] = stat
+    query += " ORDER BY run_at DESC"
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(query), params).fetchall()
+    return [
+        BacktestRunOut(
+            run_id=r[0], run_at=str(r[1]), stat_type=r[2], model_version=r[3],
+            n_test_games=r[4], mae=float(r[5]) if r[5] is not None else None,
+            coverage_16=float(r[6]) if r[6] is not None else None,
+            coverage_84=float(r[7]) if r[7] is not None else None,
+        )
+        for r in rows
+    ]

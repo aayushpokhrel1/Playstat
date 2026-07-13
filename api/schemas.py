@@ -68,3 +68,14 @@ class ParlayRecommendationOut(BaseModel):
     joint_prob: float
     combined_odds: float
     legs: list[ParlayLeg]
+
+
+class BacktestRunOut(BaseModel):
+    run_id: int
+    run_at: str
+    stat_type: str
+    model_version: str
+    n_test_games: int | None
+    mae: float | None
+    coverage_16: float | None
+    coverage_84: float | None
