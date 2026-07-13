@@ -1,6 +1,8 @@
 import json
+import os
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from api.schemas import (
@@ -17,6 +19,17 @@ from api.schemas import (
 from ingestion.db import get_engine
 
 app = FastAPI(title="Playstat API")
+
+_cors_origins = os.environ.get(
+    "CORS_ORIGINS", "http://localhost:3000,http://localhost:8081"
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in _cors_origins.split(",") if origin.strip()],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 engine = get_engine()
 
 
