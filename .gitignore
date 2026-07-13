@@ -5,3 +5,5 @@ __pycache__/
 myenv/
 .DS_Store
 logs/
+api.log
+api.error.log
