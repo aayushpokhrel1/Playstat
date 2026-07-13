@@ -1,15 +1,50 @@
+import argparse
+from datetime import date, timedelta
+
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
 from ingestion import db
 
-ROLLING_WINDOWS = {"pts_avg_5": ("points", 5), "pts_avg_10": ("points", 10),
-                    "reb_avg_5": ("rebounds", 5), "ast_avg_5": ("assists", 5)}
+# Per-sport feature definitions. windows: feature name -> (stat_type, n games).
+# scoring_stat drives the opponent "defensive rating" proxy (points allowed
+# per game for the NBA, runs allowed per game for MLB). Pitcher windows use 3
+# appearances (starters pitch every ~5 days, so 3 starts ≈ two weeks of form).
+SPORT_CONFIG = {
+    "nba": {
+        "windows": {
+            "pts_avg_5": ("points", 5), "pts_avg_10": ("points", 10),
+            "reb_avg_5": ("rebounds", 5), "ast_avg_5": ("assists", 5),
+        },
+        "scoring_stat": "points",
+    },
+    "mlb": {
+        "windows": {
+            "hits_avg_5": ("hits", 5), "hits_avg_10": ("hits", 10),
+            "tb_avg_5": ("total_bases", 5), "tb_avg_10": ("total_bases", 10),
+            "hr_avg_10": ("home_runs", 10),
+            "runs_avg_5": ("runs", 5),
+            "rbis_avg_5": ("rbis", 5),
+            "bso_avg_5": ("batter_strikeouts", 5),
+            "walks_avg_5": ("walks", 5),
+            "sb_avg_10": ("stolen_bases", 10),
+            "ab_avg_5": ("at_bats", 5),
+            "pso_avg_3": ("pitcher_strikeouts", 3),
+            "er_avg_3": ("earned_runs", 3),
+            "outs_avg_3": ("outs_recorded", 3),
+            "ha_avg_3": ("hits_allowed", 3),
+            "wa_avg_3": ("walks_allowed", 3),
+        },
+        "scoring_stat": "runs",
+    },
+}
 
 
-def _load_player_games(conn):
-    """One row per (player, game) played, joined with game/team context.
+def _load_player_games(conn, sport, windows):
+    """One row per (player, game) played, joined with game/team context —
+    pivoted back to wide (one column per stat_type) from the long-format
+    player_game_stats table, since rolling windows want columnar stats.
 
     Uses players.team_id as the player's team for every game (Phase 1's known
     simplification for traded players — team_id reflects the latest roster pull,
@@ -18,21 +53,64 @@ def _load_player_games(conn):
     df = pd.read_sql(
         text(
             """
-            SELECT pgs.player_id, pgs.game_id, pgs.points, pgs.rebounds, pgs.assists,
+            SELECT pgs.player_id, pgs.game_id, pgs.stat_type, pgs.value,
                    g.date, g.home_team_id, g.away_team_id, p.team_id
             FROM player_game_stats pgs
             JOIN games g ON g.game_id = pgs.game_id
             JOIN players p ON p.player_id = pgs.player_id
+            WHERE g.sport = :sport
             """
         ),
         conn,
+        params={"sport": sport},
     )
+    wide = df.pivot_table(
+        index=["player_id", "game_id"], columns="stat_type", values="value", aggfunc="first"
+    ).reset_index()
+    meta = df[
+        ["player_id", "game_id", "date", "home_team_id", "away_team_id", "team_id"]
+    ].drop_duplicates()
+    wide = meta.merge(wide, on=["player_id", "game_id"], how="left")
+
+    stat_cols = {stat for stat, _ in windows.values()}
+    for col in stat_cols:
+        if col not in wide.columns:
+            wide[col] = np.nan
+        wide[col] = wide[col].astype("float64")
+
+    wide["date"] = pd.to_datetime(wide["date"])
+    return wide.sort_values(["player_id", "date"])
+
+
+def _load_upcoming_player_games(conn, sport, upcoming_days, stat_cols):
+    """Synthesized (player, upcoming game) rows with NaN stats, so the same
+    rolling/shift(1) machinery produces as-of features for games that haven't
+    been played — which is what live predictions (and therefore live edges)
+    need. Candidate players are everyone currently rostered (players.team_id)
+    on either team of each upcoming game.
+    """
+    today = date.today()
+    df = pd.read_sql(
+        text(
+            """
+            SELECT p.player_id, g.game_id, g.date, g.home_team_id, g.away_team_id, p.team_id
+            FROM games g
+            JOIN players p ON p.team_id IN (g.home_team_id, g.away_team_id)
+            WHERE g.sport = :sport AND g.status != 'FT'
+              AND g.date >= :today AND g.date <= :horizon
+            """
+        ),
+        conn,
+        params={"sport": sport, "today": today, "horizon": today + timedelta(days=upcoming_days)},
+    )
+    for col in stat_cols:
+        df[col] = np.nan
     df["date"] = pd.to_datetime(df["date"])
-    return df.sort_values(["player_id", "date"])
+    return df
 
 
-def _add_rolling_stat_averages(df):
-    for feature_name, (source_col, window) in ROLLING_WINDOWS.items():
+def _add_rolling_stat_averages(df, windows):
+    for feature_name, (source_col, window) in windows.items():
         df[feature_name] = df.groupby("player_id")[source_col].transform(
             lambda s, w=window: s.shift(1).rolling(w, min_periods=w).mean()
         )
@@ -56,30 +134,32 @@ def _add_rest_and_schedule_features(df, games_df):
     )
 
 
-def _add_opponent_def_rating(df, games_df):
-    """Proxy for opponent defensive rating: opponent's average points allowed
-    per game so far this season, using only games strictly before this one.
+def _add_opponent_def_rating(df, games_df, scoring_stat):
+    """Proxy for opponent defensive rating: opponent's average scoring-stat
+    allowed per game so far this season (points for nba, runs for mlb), using
+    only games strictly before this one. Unplayed games contribute nothing —
+    their team totals are NaN, which shift+expanding skips.
     """
-    team_game_points = df.groupby(["team_id", "game_id"], as_index=False)["points"].sum()
+    team_game_scoring = df.groupby(["team_id", "game_id"], as_index=False)[scoring_stat].sum(min_count=1)
 
     merged = games_df.merge(
-        team_game_points.rename(columns={"team_id": "home_team_id", "points": "home_points"}),
+        team_game_scoring.rename(columns={"team_id": "home_team_id", scoring_stat: "home_scored"}),
         on=["game_id", "home_team_id"],
         how="left",
     ).merge(
-        team_game_points.rename(columns={"team_id": "away_team_id", "points": "away_points"}),
+        team_game_scoring.rename(columns={"team_id": "away_team_id", scoring_stat: "away_scored"}),
         on=["game_id", "away_team_id"],
         how="left",
     )
 
-    home_rows = merged[["game_id", "date", "home_team_id", "away_points"]].rename(
-        columns={"home_team_id": "team_id", "away_points": "points_allowed"}
+    home_rows = merged[["game_id", "date", "home_team_id", "away_scored"]].rename(
+        columns={"home_team_id": "team_id", "away_scored": "allowed"}
     )
-    away_rows = merged[["game_id", "date", "away_team_id", "home_points"]].rename(
-        columns={"away_team_id": "team_id", "home_points": "points_allowed"}
+    away_rows = merged[["game_id", "date", "away_team_id", "home_scored"]].rename(
+        columns={"away_team_id": "team_id", "home_scored": "allowed"}
     )
     team_defense = pd.concat([home_rows, away_rows]).sort_values(["team_id", "date"])
-    team_defense["opp_def_rating"] = team_defense.groupby("team_id")["points_allowed"].transform(
+    team_defense["opp_def_rating"] = team_defense.groupby("team_id")["allowed"].transform(
         lambda s: s.shift(1).expanding().mean()
     )
 
@@ -95,47 +175,63 @@ def _add_opponent_def_rating(df, games_df):
     )
 
 
-def compute_features(engine):
+def compute_features(engine, sport="nba", upcoming_days=0):
+    """Computes rolling features for every played game, and — when
+    upcoming_days > 0 — for scheduled games up to that many days out, so
+    modeling/predict_upcoming.py can predict games before they're played.
+    """
+    config = SPORT_CONFIG[sport]
+    windows = config["windows"]
+    stat_cols = {stat for stat, _ in windows.values()}
+
     with engine.begin() as conn:
-        stats = _load_player_games(conn)
+        stats = _load_player_games(conn, sport, windows)
+        if upcoming_days > 0:
+            upcoming = _load_upcoming_player_games(conn, sport, upcoming_days, stat_cols)
+            stats = pd.concat([stats, upcoming], ignore_index=True).sort_values(["player_id", "date"])
         games_df = pd.read_sql(
-            text("SELECT game_id, date, home_team_id, away_team_id FROM games"), conn
+            text("SELECT game_id, date, home_team_id, away_team_id FROM games WHERE sport = :sport"),
+            conn,
+            params={"sport": sport},
         )
     games_df["date"] = pd.to_datetime(games_df["date"])
 
-    stats = _add_rolling_stat_averages(stats)
+    stats = _add_rolling_stat_averages(stats, windows)
     stats = _add_rest_and_schedule_features(stats, games_df)
-    stats = _add_opponent_def_rating(stats, games_df)
+    stats = _add_opponent_def_rating(stats, games_df, config["scoring_stat"])
     stats["is_home"] = stats["team_id"] == stats["home_team_id"]
 
-    feature_cols = [
-        "pts_avg_5", "pts_avg_10", "reb_avg_5", "ast_avg_5",
-        "opp_def_rating", "rest_days", "is_home", "is_back_to_back",
-    ]
+    feature_cols = list(windows) + ["opp_def_rating", "rest_days", "is_home", "is_back_to_back"]
 
+    # rolling_player_features is long format: one row per non-null feature,
+    # booleans stored as 0/1 numerics (the models always consumed them as floats).
     rows = 0
     with engine.begin() as conn:
         for record in stats.to_dict("records"):
-            values = {
-                "player_id": record["player_id"],
-                "as_of_date": record["date"].date(),
-            }
             for col in feature_cols:
                 v = record.get(col)
                 if v is None or (isinstance(v, float) and pd.isna(v)):
-                    values[col] = None
-                elif col in ("is_home", "is_back_to_back"):
-                    values[col] = bool(v)
-                elif col == "rest_days":
-                    values[col] = int(v)
-                else:
-                    values[col] = float(v)
-
-            db.upsert(conn, "rolling_player_features", ["player_id", "as_of_date"], values)
+                    continue
+                db.upsert(
+                    conn,
+                    "rolling_player_features",
+                    ["player_id", "as_of_date", "feature"],
+                    {
+                        "player_id": record["player_id"],
+                        "as_of_date": record["date"].date(),
+                        "feature": col,
+                        "value": float(v),
+                    },
+                )
             rows += 1
 
-    print(f"rolling_player_features: upserted {rows} rows")
+    print(f"({sport}) rolling_player_features: upserted feature rows for {rows} player-games"
+          + (f" (incl. upcoming through +{upcoming_days}d)" if upcoming_days else ""))
 
 
 if __name__ == "__main__":
-    compute_features(db.get_engine())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sport", choices=list(SPORT_CONFIG), default="nba")
+    parser.add_argument("--upcoming-days", type=int, default=0)
+    args = parser.parse_args()
+    compute_features(db.get_engine(), args.sport, args.upcoming_days)

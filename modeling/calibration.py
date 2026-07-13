@@ -9,7 +9,7 @@ DEVIATION_WARNING_THRESHOLD = 0.10
 
 
 def check_coverage(engine, stat):
-    target_col, feature_cols = STAT_CONFIG[stat]
+    target_col, feature_cols, _ = STAT_CONFIG[stat]
     df = load_dataset(engine, stat)
 
     if len(df) < 20:

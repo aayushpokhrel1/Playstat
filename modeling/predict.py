@@ -13,7 +13,7 @@ def predict_for_games(engine, game_ids, stat):
     whether game_ids are a held-out backtest slice or (once the current season is
     loaded) genuinely future games — either way the target rows aren't in training.
     """
-    _, feature_cols = STAT_CONFIG[stat]
+    _, feature_cols, _ = STAT_CONFIG[stat]
     df = load_dataset(engine, stat)
     predict_df = df[df["game_id"].isin(game_ids)]
     train_df = df[~df["game_id"].isin(game_ids)]

@@ -8,13 +8,35 @@ from sqlalchemy import text
 
 from ingestion import db
 
-# stat -> (target_col, feature_cols). Feature sets differ per stat because the
-# schema only has a 10-game rolling average for points (no reb_avg_10/ast_avg_10).
+# stat -> (target_col, feature_cols, sport). Feature names come from
+# modeling/features.py's SPORT_CONFIG windows plus the schedule/opponent
+# features. rest_days/is_back_to_back are NBA-only: MLB teams play near-daily,
+# so those carry no signal there. at_bats/outs_recorded averages act as the
+# playing-time exposure features (the MLB analogue of minutes).
 STAT_CONFIG = {
-    "points": ("points", ["pts_avg_5", "pts_avg_10", "opp_def_rating", "rest_days", "is_home", "is_back_to_back"]),
-    "rebounds": ("rebounds", ["reb_avg_5", "opp_def_rating", "rest_days", "is_home", "is_back_to_back"]),
-    "assists": ("assists", ["ast_avg_5", "opp_def_rating", "rest_days", "is_home", "is_back_to_back"]),
+    "points": ("points", ["pts_avg_5", "pts_avg_10", "opp_def_rating", "rest_days", "is_home", "is_back_to_back"], "nba"),
+    "rebounds": ("rebounds", ["reb_avg_5", "opp_def_rating", "rest_days", "is_home", "is_back_to_back"], "nba"),
+    "assists": ("assists", ["ast_avg_5", "opp_def_rating", "rest_days", "is_home", "is_back_to_back"], "nba"),
+    # MLB batters
+    "hits": ("hits", ["hits_avg_5", "hits_avg_10", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    "total_bases": ("total_bases", ["tb_avg_5", "tb_avg_10", "hr_avg_10", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    "home_runs": ("home_runs", ["hr_avg_10", "tb_avg_10", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    "rbis": ("rbis", ["rbis_avg_5", "tb_avg_5", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    "runs": ("runs", ["runs_avg_5", "hits_avg_5", "walks_avg_5", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    "batter_strikeouts": ("batter_strikeouts", ["bso_avg_5", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    "walks": ("walks", ["walks_avg_5", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    "stolen_bases": ("stolen_bases", ["sb_avg_10", "ab_avg_5", "opp_def_rating", "is_home"], "mlb"),
+    # MLB pitchers
+    "pitcher_strikeouts": ("pitcher_strikeouts", ["pso_avg_3", "outs_avg_3", "opp_def_rating", "is_home"], "mlb"),
+    "earned_runs": ("earned_runs", ["er_avg_3", "outs_avg_3", "ha_avg_3", "opp_def_rating", "is_home"], "mlb"),
+    "hits_allowed": ("hits_allowed", ["ha_avg_3", "outs_avg_3", "opp_def_rating", "is_home"], "mlb"),
+    "walks_allowed": ("walks_allowed", ["wa_avg_3", "outs_avg_3", "opp_def_rating", "is_home"], "mlb"),
+    "outs_recorded": ("outs_recorded", ["outs_avg_3", "er_avg_3", "opp_def_rating", "is_home"], "mlb"),
 }
+
+
+def stats_for_sport(sport):
+    return [stat for stat, (_, _, s) in STAT_CONFIG.items() if s == sport]
 
 
 def model_version(stat):
@@ -24,26 +46,56 @@ def model_version(stat):
 def load_dataset(engine, stat):
     """Historical rows with both a known outcome and computed features for the given stat.
     Only covers games that already have player_game_stats — see modeling/features.py.
+
+    player_game_stats and rolling_player_features are long format (multi-sport,
+    see db/migrations/001_multi_sport.sql); this pivots both back to the wide
+    frame the models train on.
     """
-    target_col, feature_cols = STAT_CONFIG[stat]
+    target_col, feature_cols, sport = STAT_CONFIG[stat]
     with engine.begin() as conn:
-        df = pd.read_sql(
+        stats_df = pd.read_sql(
             text(
                 """
-                SELECT pgs.player_id, pgs.game_id, pgs.points, pgs.rebounds, pgs.assists, g.date,
-                       rpf.pts_avg_5, rpf.pts_avg_10, rpf.reb_avg_5, rpf.ast_avg_5,
-                       rpf.opp_def_rating, rpf.rest_days, rpf.is_home, rpf.is_back_to_back
+                SELECT pgs.player_id, pgs.game_id, pgs.stat_type, pgs.value, g.date
                 FROM player_game_stats pgs
                 JOIN games g ON g.game_id = pgs.game_id
-                JOIN rolling_player_features rpf
-                  ON rpf.player_id = pgs.player_id AND rpf.as_of_date = g.date
+                WHERE g.sport = :sport AND pgs.stat_type = :stat_type
                 """
             ),
             conn,
+            params={"sport": sport, "stat_type": target_col},
         )
-    df["date"] = pd.to_datetime(df["date"])
+        feats_df = pd.read_sql(
+            text(
+                """
+                SELECT rpf.player_id, rpf.as_of_date, rpf.feature, rpf.value
+                FROM rolling_player_features rpf
+                WHERE rpf.feature = ANY(:features)
+                """
+            ),
+            conn,
+            params={"features": list(feature_cols)},
+        )
+
+    stats_df = stats_df.rename(columns={"value": target_col})
+    feats_wide = feats_df.pivot_table(
+        index=["player_id", "as_of_date"], columns="feature", values="value", aggfunc="first"
+    ).reset_index()
+
+    stats_df["date"] = pd.to_datetime(stats_df["date"])
+    feats_wide["as_of_date"] = pd.to_datetime(feats_wide["as_of_date"])
+
+    df = stats_df.merge(
+        feats_wide,
+        left_on=["player_id", "date"],
+        right_on=["player_id", "as_of_date"],
+        how="inner",
+    )
     for col in feature_cols:
+        if col not in df.columns:
+            df[col] = float("nan")
         df[col] = df[col].astype("float64")
+    df[target_col] = df[target_col].astype("float64")
     # Only require the target — feature columns (e.g. pts_avg_10) are often NaN
     # this early in the data, and XGBoost handles missing feature values natively
     # via learned default-direction splits, so there's no need to drop those rows.
@@ -85,7 +137,7 @@ def fit_models(train_df, stat):
     Holding out a calibration slice and correcting for the measured residual
     quantile is the standard fix for this failure mode.
     """
-    target_col, feature_cols = STAT_CONFIG[stat]
+    target_col, feature_cols, _ = STAT_CONFIG[stat]
     X = train_df[feature_cols]
     y = train_df[target_col]
 
@@ -128,7 +180,7 @@ def main():
     parser.add_argument("--stat", choices=list(STAT_CONFIG), default="points")
     args = parser.parse_args()
     stat = args.stat
-    target_col, feature_cols = STAT_CONFIG[stat]
+    target_col, feature_cols, _ = STAT_CONFIG[stat]
 
     engine = db.get_engine()
     df = load_dataset(engine, stat)

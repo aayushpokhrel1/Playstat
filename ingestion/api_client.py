@@ -2,7 +2,7 @@ import time
 
 import requests
 
-from ingestion.config import API_BASKETBALL_BASE_URL, API_BASKETBALL_KEY
+from ingestion.config import API_BASKETBALL_KEY, SPORTS
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 5
@@ -11,11 +11,17 @@ MIN_SECONDS_BETWEEN_REQUESTS = 6.5  # stay under the 10-requests/minute cap
 
 
 class QuotaExhaustedError(Exception):
-    """Raised when the API-Basketball daily request quota is used up."""
+    """Raised when the API-Sports daily request quota is used up."""
 
 
-class APIBasketballClient:
-    def __init__(self):
+class APISportsClient:
+    """Client for any API-Sports per-sport API — they share auth, rate-limit
+    headers, and response envelope; only the base URL differs per sport.
+    """
+
+    def __init__(self, sport="nba"):
+        self.sport = sport
+        self.base_url = SPORTS[sport]["base_url"]
         self.session = requests.Session()
         self.session.headers.update({"x-apisports-key": API_BASKETBALL_KEY})
         self._last_request_at = 0
@@ -27,7 +33,7 @@ class APIBasketballClient:
         self._last_request_at = time.monotonic()
 
     def get(self, path, params=None):
-        url = f"{API_BASKETBALL_BASE_URL}{path}"
+        url = f"{self.base_url}{path}"
 
         for attempt in range(1, MAX_RETRIES + 1):
             self._pace()
@@ -37,7 +43,7 @@ class APIBasketballClient:
                 daily_remaining = response.headers.get("x-ratelimit-requests-remaining")
                 if daily_remaining is not None and int(daily_remaining) <= 0:
                     raise QuotaExhaustedError(
-                        f"Daily API-Basketball quota exhausted on {path}."
+                        f"Daily API-Sports quota exhausted on {path}."
                     )
                 # Otherwise this is the 10-requests/minute throttle, not the daily cap.
                 time.sleep(PER_MINUTE_THROTTLE_SLEEP_SECONDS)
@@ -46,7 +52,7 @@ class APIBasketballClient:
             daily_remaining = response.headers.get("x-ratelimit-requests-remaining")
             if daily_remaining is not None and int(daily_remaining) <= 0:
                 raise QuotaExhaustedError(
-                    f"Daily API-Basketball quota exhausted after {path}."
+                    f"Daily API-Sports quota exhausted after {path}."
                 )
 
             if response.status_code >= 500 and attempt < MAX_RETRIES:
@@ -63,10 +69,13 @@ class APIBasketballClient:
                     continue
                 if isinstance(errors, dict) and "requests" in errors:
                     raise QuotaExhaustedError(
-                        f"Daily API-Basketball quota exhausted on {path}: {errors['requests']}"
+                        f"Daily API-Sports quota exhausted on {path}: {errors['requests']}"
                     )
-                raise RuntimeError(f"API-Basketball error on {path}: {errors}")
+                raise RuntimeError(f"API-Sports error on {path}: {errors}")
 
             return payload.get("response", [])
 
         raise RuntimeError(f"Exhausted retries fetching {path}")
+
+# Backwards-compatible alias from the basketball-only era.
+APIBasketballClient = APISportsClient

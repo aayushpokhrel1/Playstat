@@ -4,6 +4,7 @@ from pydantic import BaseModel
 class TeamOut(BaseModel):
     team_id: int
     name: str
+    sport: str = "nba"
 
 
 class PlayerOut(BaseModel):
@@ -11,6 +12,18 @@ class PlayerOut(BaseModel):
     name: str
     team_id: int | None
     position: str | None
+    sport: str = "nba"
+
+
+class GameOut(BaseModel):
+    game_id: int
+    sport: str
+    date: str
+    home_team_id: int
+    home_team_name: str
+    away_team_id: int
+    away_team_name: str
+    status: str | None
 
 
 class GameLogEntry(BaseModel):
@@ -37,15 +50,38 @@ class BoxScoreOut(BaseModel):
     player_name: str
     game_id: int
     date: str
+    # NBA-era top-level fields, kept for backward compatibility (Budgerr's
+    # auto-settlement reads these); null for non-NBA players.
     points: int | None
     rebounds: int | None
     assists: int | None
+    # Full per-sport stat map, e.g. {"hits": 2.0, "total_bases": 5.0, ...}.
+    stats: dict[str, float] = {}
+    sport: str = "nba"
 
 
 class ModelPerformanceOut(BaseModel):
     stat_type: str
     mae: float
     n: int
+
+
+class GamePredictionOut(BaseModel):
+    game_id: int
+    date: str
+    sport: str
+    home_team: str
+    away_team: str
+    market: str
+    line_value: float
+    predicted_mean: float
+    prob_under: float
+    prob_over: float
+    model_version: str
+    # Latest book line for the same market, when one has been ingested.
+    book_line_value: float | None = None
+    book_over_odds: int | None = None
+    book_under_odds: int | None = None
 
 
 class EdgeOut(BaseModel):

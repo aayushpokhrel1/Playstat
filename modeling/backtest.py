@@ -7,7 +7,7 @@ from modeling.train import STAT_CONFIG, fit_models, load_dataset, model_version,
 
 
 def run_backtest(engine, stat):
-    target_col, feature_cols = STAT_CONFIG[stat]
+    target_col, feature_cols, _ = STAT_CONFIG[stat]
     df = load_dataset(engine, stat)
 
     if len(df) < 20:

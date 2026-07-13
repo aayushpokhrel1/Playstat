@@ -1,9 +1,16 @@
--- Basketball Analytics + Parlay Optimizer schema
--- Primary keys for teams/players/games use the API-Basketball numeric IDs directly,
+-- Sports Analytics + Parlay Optimizer schema (multi-sport: nba live, mlb/nfl planned)
+-- Primary keys for teams/players/games use the API-Sports numeric IDs directly,
 -- so ingestion can upsert on the API's own IDs instead of maintaining a mapping table.
+-- Each sport's API has its own overlapping ID space, so ingestion applies a
+-- deterministic per-sport ID offset (see SPORTS in ingestion/config.py) — nba +0,
+-- so all pre-multi-sport rows are unchanged.
+-- Applied migrations: db/migrations/001_multi_sport.sql,
+-- db/migrations/002_team_game_markets.sql (a fresh install of this file needs
+-- no migrations).
 
 CREATE TABLE teams (
     team_id     INTEGER PRIMARY KEY,
+    sport       TEXT NOT NULL,
     name        TEXT NOT NULL,
     conference  TEXT,
     pace        NUMERIC,
@@ -12,6 +19,7 @@ CREATE TABLE teams (
 
 CREATE TABLE players (
     player_id   INTEGER PRIMARY KEY,
+    sport       TEXT NOT NULL,
     name        TEXT NOT NULL,
     team_id     INTEGER REFERENCES teams(team_id),
     position    TEXT
@@ -19,39 +27,69 @@ CREATE TABLE players (
 
 CREATE TABLE games (
     game_id         INTEGER PRIMARY KEY,
+    sport           TEXT NOT NULL,
     date            DATE NOT NULL,
     home_team_id    INTEGER REFERENCES teams(team_id),
     away_team_id    INTEGER REFERENCES teams(team_id),
     status          TEXT
 );
 CREATE INDEX idx_games_date ON games(date);
+CREATE INDEX idx_games_sport_date ON games(sport, date);
 
--- Actual results, used for training + backtesting.
+-- Actual results, used for training + backtesting. Long format: one row per
+-- (player, game, stat), so each sport brings its own stat_type vocabulary
+-- (nba: points/rebounds/assists/minutes) without schema changes.
 CREATE TABLE player_game_stats (
     player_id   INTEGER REFERENCES players(player_id),
     game_id     INTEGER REFERENCES games(game_id),
-    points      INTEGER,
-    rebounds    INTEGER,
-    assists     INTEGER,
-    minutes     NUMERIC,
-    usage_rate  NUMERIC,
-    PRIMARY KEY (player_id, game_id)
+    stat_type   TEXT NOT NULL,
+    value       NUMERIC,
+    PRIMARY KEY (player_id, game_id, stat_type)
 );
 CREATE INDEX idx_player_game_stats_game ON player_game_stats(game_id);
 
--- Computed rolling features, not raw stats. Populated in a later phase.
+-- Computed rolling features, not raw stats. Long format for the same reason:
+-- feature names are per-sport (nba: pts_avg_5, ..., is_back_to_back as 0/1).
 CREATE TABLE rolling_player_features (
-    player_id           INTEGER REFERENCES players(player_id),
-    as_of_date          DATE NOT NULL,
-    pts_avg_5           NUMERIC,
-    pts_avg_10          NUMERIC,
-    reb_avg_5           NUMERIC,
-    ast_avg_5           NUMERIC,
-    opp_def_rating      NUMERIC,
-    rest_days           INTEGER,
-    is_home             BOOLEAN,
-    is_back_to_back     BOOLEAN,
-    PRIMARY KEY (player_id, as_of_date)
+    player_id   INTEGER REFERENCES players(player_id),
+    as_of_date  DATE NOT NULL,
+    feature     TEXT NOT NULL,
+    value       NUMERIC,
+    PRIMARY KEY (player_id, as_of_date, feature)
+);
+
+-- Team/game-level analogues of the player-side trio (migration 002): actuals
+-- (e.g. runs_inning_1 from MLB linescores), book lines for game-scoped markets
+-- (e.g. first-inning total runs), and game-level model outputs.
+CREATE TABLE team_game_stats (
+    team_id     INTEGER REFERENCES teams(team_id),
+    game_id     INTEGER REFERENCES games(game_id),
+    stat_type   TEXT NOT NULL,
+    value       NUMERIC,
+    PRIMARY KEY (team_id, game_id, stat_type)
+);
+CREATE INDEX idx_team_game_stats_game ON team_game_stats(game_id);
+
+CREATE TABLE game_lines (
+    line_id     SERIAL PRIMARY KEY,
+    game_id     INTEGER REFERENCES games(game_id),
+    market      TEXT NOT NULL,
+    line_value  NUMERIC,
+    over_odds   INTEGER,
+    under_odds  INTEGER,
+    pulled_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_game_lines_game ON game_lines(game_id);
+
+CREATE TABLE game_predictions (
+    game_id         INTEGER REFERENCES games(game_id),
+    market          TEXT NOT NULL,
+    predicted_mean  NUMERIC,
+    prob_under      NUMERIC,
+    prob_over       NUMERIC,
+    line_value      NUMERIC,
+    model_version   TEXT NOT NULL,
+    PRIMARY KEY (game_id, market, model_version)
 );
 
 -- Sportsbook prop lines, from the odds API. Populated in a later phase.

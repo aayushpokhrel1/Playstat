@@ -59,8 +59,14 @@ def compute_edges(engine):
     merged = merged[merged["model_version"] == merged["stat_type"].map(model_version)]
 
     rows = 0
+    skipped_one_sided = 0
     with engine.begin() as conn:
         for record in merged.to_dict("records"):
+            # A book listing only one side (~8% of live MLB lines) can't be
+            # de-vigged; skip rather than crash on the missing odds.
+            if pd.isna(record["over_odds"]) or pd.isna(record["under_odds"]):
+                skipped_one_sided += 1
+                continue
             model_prob_over = 1 - norm.cdf(
                 record["line_value"], loc=record["predicted_mean"], scale=record["predicted_std"]
             )
@@ -111,7 +117,8 @@ def compute_edges(engine):
             )
             rows += 1
 
-    print(f"edges: upserted {rows} rows")
+    print(f"edges: upserted {rows} rows"
+          + (f" (skipped {skipped_one_sided} one-sided lines)" if skipped_one_sided else ""))
 
 
 if __name__ == "__main__":
