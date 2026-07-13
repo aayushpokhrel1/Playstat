@@ -192,6 +192,18 @@ Everything below is a known, already-diagnosed gap — not a surprise to redisco
 
 ---
 
+## 12. Session Notes (for whoever/whatever picks this up next)
+
+This project's been built over a long-running Claude Code session that eventually hit the practical context-window limit. A few notes for next time, since that'll happen again on a project this size:
+
+- **The context window is a model-level limit, not an interface one** — switching between Claude Code surfaces (terminal vs. a GUI wrapper) doesn't change how much it can hold. What actually helps is not relying on conversation history for anything durable.
+- **§11 above exists for exactly this reason** — a fresh session should read "Known Issues & Follow-ups" first, rather than needing this session's full history to know where things stand.
+- **Consider adding a `CLAUDE.md`** (doesn't exist yet) — Claude Code loads it automatically at the start of every session, which is a cheaper way to carry forward conventions/instructions than re-explaining them in chat each time. Keep it focused on *how to work in this repo*; leave the architecture/status narrative in this README.
+- **`/compact`** (manually compact a long conversation) and **`/clear`** (reset the conversation, keep the project files) are both available in the terminal CLI if a session is getting unwieldy — better than losing everything by starting over, if there's context worth keeping.
+- **The general pattern**: externalize durable state into files — this README in particular — rather than conversation memory. That's the actual fix for "long project, limited context," and it works the same regardless of which Claude Code surface is in use.
+
+---
+
 ## Next Step
 
 The build-order phases are all built. What's left is mostly data/ops and the follow-ups above, not new architecture: get current-season odds actually flowing through `ingestion/odds_ingest.py` so `prop_lines`/`edges`/`parlay_recommendations` stop being empty, work through §11's list as it becomes relevant, and decide whether/how to deploy this beyond localhost.
