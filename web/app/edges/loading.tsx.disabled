@@ -1,0 +1,34 @@
+import Link from "next/link";
+import styles from "./edges.module.css";
+
+export default function Loading() {
+  return (
+    <main className={styles.root}>
+      <div className={styles.container}>
+        <Link href="/" className={styles.back}>
+          ← Back
+        </Link>
+
+        <div className={styles.header}>
+          <h1 className={styles.title}>Tonight&apos;s Edges</h1>
+        </div>
+
+        <section className={styles.section}>
+          <div className={styles.tableWrap} role="status" aria-label="Loading tonight's edges">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className={styles.skeletonRow}>
+                <div className={styles.skeletonBlock} />
+                <div className={styles.skeletonBlock} />
+                <div className={styles.skeletonBlock} />
+                <div className={styles.skeletonBlock} />
+                <div className={styles.skeletonBlock} />
+                <div className={styles.skeletonBlock} />
+                <div className={styles.skeletonBlock} />
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}

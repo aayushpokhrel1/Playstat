@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getEdges, getParlayRecommendations } from "../lib/api";
 import EdgesExplorer from "./EdgesExplorer";
 import ParlaySection from "./ParlaySection";
+import RetryButton from "./RetryButton";
 import styles from "./edges.module.css";
 
 export default async function EdgesPage() {
@@ -34,24 +35,27 @@ export default async function EdgesPage() {
           )}
         </div>
 
-        <section className={styles.section}>
-          {fetchError ? (
-            <div className={styles.errorState}>{fetchError}</div>
-          ) : (
-            <EdgesExplorer edges={edges ?? []} />
-          )}
-        </section>
+        {fetchError ? (
+          <section className={styles.section} aria-label="Tonight's edges">
+            <div className={styles.errorState}>
+              <p className={styles.emptyStateTitle}>{fetchError}</p>
+              <RetryButton />
+            </div>
+          </section>
+        ) : (
+          <>
+            <section className={styles.section} aria-label="Tonight's edges">
+              <EdgesExplorer edges={edges ?? []} />
+            </section>
 
-        <section className={styles.section}>
-          <div className={styles.sectionHeader}>
-            <h2 className={styles.sectionTitle}>Suggested parlays</h2>
-          </div>
-          {fetchError ? (
-            <div className={styles.errorState}>{fetchError}</div>
-          ) : (
-            <ParlaySection parlays={parlays ?? []} />
-          )}
-        </section>
+            <section className={styles.section}>
+              <div className={styles.sectionHeader}>
+                <h2 className={styles.sectionTitle}>Suggested parlays</h2>
+              </div>
+              <ParlaySection parlays={parlays ?? []} />
+            </section>
+          </>
+        )}
       </div>
     </main>
   );

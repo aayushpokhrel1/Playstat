@@ -9,6 +9,10 @@ type SortKey = "edge" | "model_prob" | "odds" | "line_value";
 type SortDirection = "asc" | "desc";
 
 const STAT_LABELS: Record<string, string> = {
+  hits: "Hits",
+  rbis: "RBIs",
+  runs: "Runs",
+  walks: "Walks",
   total_bases: "Total bases",
   batter_strikeouts: "Batter Ks",
   pitcher_strikeouts: "Pitcher Ks",
@@ -30,6 +34,37 @@ function formatOdds(odds: number): string {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function sortAriaFor(sortKey: SortKey, sortDirection: SortDirection, key: SortKey): "ascending" | "descending" | "none" {
+  if (sortKey !== key) return "none";
+  return sortDirection === "asc" ? "ascending" : "descending";
+}
+
+function SortHeader({
+  label,
+  sortableKey,
+  sortKey,
+  sortDirection,
+  onSort,
+}: {
+  label: string;
+  sortableKey: SortKey;
+  sortKey: SortKey;
+  sortDirection: SortDirection;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = sortKey === sortableKey;
+  return (
+    <th className={styles.th} scope="col" aria-sort={sortAriaFor(sortKey, sortDirection, sortableKey)}>
+      <button type="button" className={styles.thButton} onClick={() => onSort(sortableKey)}>
+        {label}
+        <span className={`${styles.sortIcon} ${active ? styles.sortIconActive : ""}`} aria-hidden="true">
+          {active ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
 }
 
 export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
@@ -99,29 +134,6 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
 
   const hasActiveFilters = statFilter.size > 0 || sideFilter.size > 0;
 
-  function sortAriaFor(key: SortKey): "ascending" | "descending" | "none" {
-    if (sortKey !== key) return "none";
-    return sortDirection === "asc" ? "ascending" : "descending";
-  }
-
-  function SortHeader({ label, sortableKey }: { label: string; sortableKey: SortKey }) {
-    const active = sortKey === sortableKey;
-    return (
-      <th className={styles.th} scope="col" aria-sort={sortAriaFor(sortableKey)}>
-        <button
-          type="button"
-          className={styles.thButton}
-          onClick={() => handleSort(sortableKey)}
-        >
-          {label}
-          <span className={`${styles.sortIcon} ${active ? styles.sortIconActive : ""}`}>
-            {active ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}
-          </span>
-        </button>
-      </th>
-    );
-  }
-
   if (edges.length === 0) {
     return (
       <div className={styles.emptyState}>
@@ -137,7 +149,7 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
   return (
     <>
       <div className={styles.filters}>
-        <div className={styles.filterGroup}>
+        <div className={styles.filterGroup} role="group" aria-label="Filter by stat">
           {statTypes.map((stat) => (
             <button
               key={stat}
@@ -151,7 +163,7 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
           ))}
         </div>
         <div className={styles.filterDivider} aria-hidden="true" />
-        <div className={styles.filterGroup}>
+        <div className={styles.filterGroup} role="group" aria-label="Filter by side">
           {(["over", "under"] as const).map((side) => (
             <button
               key={side}
@@ -169,6 +181,10 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
             Clear filters
           </button>
         )}
+      </div>
+
+      <div className={styles.srOnly} aria-live="polite">
+        {sorted.length} of {edges.length} edges shown
       </div>
 
       {sorted.length === 0 ? (
@@ -189,7 +205,13 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
                 <th className={styles.th} scope="col">
                   Stat
                 </th>
-                <SortHeader label="Edge" sortableKey="edge" />
+                <SortHeader
+                  label="Edge"
+                  sortableKey="edge"
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={handleSort}
+                />
                 <th className={styles.th} scope="col">
                   Side
                 </th>
@@ -198,9 +220,27 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
                     Date
                   </th>
                 )}
-                <SortHeader label="Line" sortableKey="line_value" />
-                <SortHeader label="Odds" sortableKey="odds" />
-                <SortHeader label="Model prob" sortableKey="model_prob" />
+                <SortHeader
+                  label="Line"
+                  sortableKey="line_value"
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortHeader
+                  label="Odds"
+                  sortableKey="odds"
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortHeader
+                  label="Model prob"
+                  sortableKey="model_prob"
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={handleSort}
+                />
               </tr>
             </thead>
             <tbody>
@@ -211,7 +251,11 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
                 >
                   <td className={styles.td}>
                     <div className={styles.playerCell}>
-                      <Link href={`/players/${e.player_id}`} className={styles.playerLink}>
+                      <Link
+                        href={`/players/${e.player_id}`}
+                        className={styles.playerLink}
+                        title={e.player_name}
+                      >
                         {e.player_name}
                       </Link>
                     </div>
