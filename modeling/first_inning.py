@@ -7,9 +7,10 @@ model's job is deviation from that prior, not beating a coin flip. XGBoost with
 a Poisson objective predicts the expected total (a count), and the Poisson
 distribution converts that mean to P(0 or 1 runs) = e^-lambda * (1 + lambda).
 
-Known limitation: no probable-starting-pitcher feature — the single biggest
-driver of first-inning scoring. Team-level rolling form is the honest v1;
-StatsAPI exposes probable pitchers if this market earns a v2.
+v2 adds each side's starting pitcher's recent form (from the probablePitcher
+hydrate + our pitcher game logs) on top of v1's team-level rolling form —
+the starter is the single biggest driver of first-inning scoring, and v1
+without it couldn't beat the base rate on holdout.
 
 Writes game_predictions (market='first_inning_runs', line 1.5) for upcoming
 games; run after ingestion.mlb_backfill --only linescores.
@@ -27,9 +28,17 @@ from ingestion import db
 
 MARKET = "first_inning_runs"
 LINE = 1.5
-MODEL_VERSION = "xgb_poisson_fi_v1"
+MODEL_VERSION = "xgb_fi_v2"
 ROLLING_GAMES = 15
-FEATURE_COLS = ["home_scored_fi", "home_allowed_fi", "away_scored_fi", "away_allowed_fi"]
+STARTER_STATS = ["earned_runs", "outs_recorded", "hits_allowed", "walks_allowed"]
+# Rate-form beats raw per-appearance totals: ERA-style runs per 27 outs and
+# WHIP-style baserunners per inning generalize across start lengths.
+STARTER_FEATURES = ["era_form", "whip_form", "outs_form"]
+FEATURE_COLS = (
+    ["home_scored_fi", "home_allowed_fi", "away_scored_fi", "away_allowed_fi"]
+    + [f"home_st_{f}" for f in STARTER_FEATURES]
+    + [f"away_st_{f}" for f in STARTER_FEATURES]
+)
 
 
 def prob_under_2(lam):
@@ -105,6 +114,75 @@ def _add_team_form(df):
     return df
 
 
+def _add_starter_form(conn, df):
+    """v2: each side's starting pitcher's recent form (last 3 appearances,
+    strictly before the game) — the biggest driver of first-inning scoring
+    that team-level form can't see. Starters come from the probablePitcher
+    hydrate (team_game_stats stat 'starter_player_id', ingested for played
+    AND scheduled games); their form comes straight from player_game_stats.
+    A scratched/unknown starter just leaves NaN features, which XGBoost
+    handles as missing.
+    """
+    starters = pd.read_sql(
+        text("SELECT game_id, team_id, value AS starter_id FROM team_game_stats "
+             "WHERE stat_type = 'starter_player_id'"),
+        conn,
+    )
+    logs = pd.read_sql(
+        text(
+            """
+            SELECT pgs.player_id, pgs.game_id, g.date, pgs.stat_type, pgs.value
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE g.sport = 'mlb' AND pgs.stat_type = ANY(:stats)
+            """
+        ),
+        conn,
+        params={"stats": STARTER_STATS},
+    )
+    logs = logs.pivot_table(
+        index=["player_id", "game_id", "date"], columns="stat_type", values="value", aggfunc="first"
+    ).reset_index().sort_values(["player_id", "date"])
+
+    def add_rates(frame, rolled):
+        outs = rolled["outs_recorded"].clip(lower=1)
+        frame["era_form"] = rolled["earned_runs"] / outs * 27
+        frame["whip_form"] = (rolled["hits_allowed"] + rolled["walks_allowed"]) / (outs / 3)
+        frame["outs_form"] = rolled["outs_recorded"]
+        return frame
+
+    rolled = logs.groupby("player_id")[STARTER_STATS].transform(
+        lambda x: x.shift(1).rolling(10, min_periods=3).mean()
+    )
+    logs = add_rates(logs, rolled)
+
+    # As-of form per (pitcher, game) for played games; latest form for upcoming.
+    at_game = logs[["player_id", "game_id"] + STARTER_FEATURES]
+    current = logs.groupby("player_id").tail(10).groupby("player_id")[STARTER_STATS].mean()
+    current = add_rates(current, current).reset_index()[["player_id"] + STARTER_FEATURES]
+
+    for side in ("home", "away"):
+        side_starters = starters.rename(
+            columns={"team_id": f"{side}_team_id", "starter_id": f"{side}_starter_id"}
+        )
+        df = df.merge(side_starters, on=["game_id", f"{side}_team_id"], how="left")
+        # Played games: form as of that game (leakage-safe via shift(1)).
+        df = df.merge(
+            at_game.rename(columns={"player_id": f"{side}_starter_id",
+                                    **{f: f"{side}_st_{f}" for f in STARTER_FEATURES}}),
+            on=[f"{side}_starter_id", "game_id"], how="left",
+        )
+        # Upcoming games: the starter's current form (their last 3 appearances).
+        cur = current.rename(columns={"player_id": f"{side}_starter_id",
+                                      **{f: f"{side}_cur_{f}" for f in STARTER_FEATURES}})
+        df = df.merge(cur, on=f"{side}_starter_id", how="left")
+        upcoming_mask = df["home_fi"].isna()
+        for f in STARTER_FEATURES:
+            df.loc[upcoming_mask, f"{side}_st_{f}"] = df.loc[upcoming_mask, f"{side}_cur_{f}"]
+        df = df.drop(columns=[f"{side}_cur_{f}" for f in STARTER_FEATURES])
+    return df
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=2, help="predict games this many days out")
@@ -113,10 +191,14 @@ def main():
     engine = db.get_engine()
     with engine.begin() as conn:
         df = _load_game_frame(conn)
+        df = _add_starter_form(conn, df)
     df = _add_team_form(df)
     df["total_fi"] = df["home_fi"] + df["away_fi"]
 
-    played = df.dropna(subset=["total_fi"] + FEATURE_COLS).sort_values("date")
+    # Starter features may be NaN (unannounced/scratched starter, or fewer
+    # than 2 prior appearances) — XGBoost handles missing; only team form is required.
+    team_form_cols = [c for c in FEATURE_COLS if not c.startswith(("home_st_", "away_st_"))]
+    played = df.dropna(subset=["total_fi"] + team_form_cols).sort_values("date")
     if len(played) < 200:
         print(f"only {len(played)} playable rows — need more linescore history.")
         return
@@ -153,7 +235,7 @@ def main():
     # Refit on everything, predict upcoming games.
     clf, reg = fit_models(played)
     horizon = pd.Timestamp(date.today() + timedelta(days=args.days))
-    upcoming = df[df["total_fi"].isna() & (df["date"] <= horizon)].dropna(subset=FEATURE_COLS)
+    upcoming = df[df["total_fi"].isna() & (df["date"] <= horizon)].dropna(subset=team_form_cols)
     if upcoming.empty:
         print("no upcoming games with enough team history in the horizon.")
         return

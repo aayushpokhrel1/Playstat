@@ -199,32 +199,39 @@ def _upsert_player_rows(conn, game, boxscore):
 
 
 def backfill_team_stats(client, engine, season):
-    """Per-team, per-game stats from linescores — currently first-inning runs
-    (for the under-1.5 first-inning market model) and full-game runs. One
-    hydrated schedule request covers the whole season.
+    """Per-team, per-game stats — first-inning runs and full-game runs from
+    linescores (final games), plus each side's starting pitcher from the
+    probablePitcher hydrate as stat 'starter_player_id' (all games, including
+    scheduled ones, so the first-inning model can use starter form both for
+    training and for predicting tomorrow). One hydrated schedule request
+    covers the whole season.
     """
     payload = client.get(
         "/schedule",
-        params={"sportId": MLB_SPORT_ID, "season": season, "gameType": "R", "hydrate": "linescore"},
+        params={
+            "sportId": MLB_SPORT_ID, "season": season, "gameType": "R",
+            "hydrate": "linescore,probablePitcher",
+        },
     )
     games = [g for day in payload.get("dates", []) for g in day.get("games", [])]
 
-    rows = 0
+    rows = starters = 0
     with engine.begin() as conn:
         for game in games:
-            if (game.get("status") or {}).get("codedGameState") != "F":
-                continue
-            innings = (game.get("linescore") or {}).get("innings") or []
-            if not innings:
-                continue
             game_id = game["gamePk"] + MLB_ID_OFFSET
+            is_final = (game.get("status") or {}).get("codedGameState") == "F"
+            innings = (game.get("linescore") or {}).get("innings") or []
             for side in ("home", "away"):
                 team_id = game["teams"][side]["team"]["id"] + MLB_ID_OFFSET
-                first = innings[0].get(side) or {}
-                stats = {
-                    "runs_inning_1": first.get("runs"),
-                    "runs": sum((inn.get(side) or {}).get("runs") or 0 for inn in innings),
-                }
+                stats = {}
+                if is_final and innings:
+                    first = innings[0].get(side) or {}
+                    stats["runs_inning_1"] = first.get("runs")
+                    stats["runs"] = sum((inn.get(side) or {}).get("runs") or 0 for inn in innings)
+                pitcher = game["teams"][side].get("probablePitcher")
+                if pitcher and pitcher.get("id"):
+                    stats["starter_player_id"] = pitcher["id"] + MLB_ID_OFFSET
+                    starters += 1
                 for stat_type, value in stats.items():
                     if value is None:
                         continue
@@ -235,7 +242,7 @@ def backfill_team_stats(client, engine, season):
                         {"team_id": team_id, "game_id": game_id, "stat_type": stat_type, "value": value},
                     )
                     rows += 1
-    print(f"team_game_stats: upserted {rows} rows from linescores")
+    print(f"team_game_stats: upserted {rows} rows ({starters} starter assignments)")
 
 
 def backfill_player_stats(client, engine, finished_games):

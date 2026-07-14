@@ -11,6 +11,9 @@ DEFAULT_MIN_LEGS = 2
 DEFAULT_MAX_LEGS = 6
 DEFAULT_TOLERANCE = 0.15
 DEFAULT_TOP_N = 10
+# After de-vigging, one side of every line has edge >= 0 by construction, so a
+# bare "edge > 0" filter admits every line in the book. Demand a real margin.
+DEFAULT_MIN_EDGE = 0.03
 
 
 def american_to_decimal(odds):
@@ -19,8 +22,8 @@ def american_to_decimal(odds):
     return 1 + 100 / abs(odds)
 
 
-def load_candidate_legs(engine):
-    """Positive-edge legs only, with the American odds for whichever side has the edge."""
+def load_candidate_legs(engine, min_edge=DEFAULT_MIN_EDGE):
+    """Legs with a real edge margin, with the American odds for whichever side has the edge."""
     with engine.begin() as conn:
         df = pd.read_sql(
             text(
@@ -34,10 +37,11 @@ def load_candidate_legs(engine):
                     FROM prop_lines
                     ORDER BY player_id, game_id, stat_type, pulled_at DESC
                 ) pl ON pl.player_id = e.player_id AND pl.game_id = e.game_id AND pl.stat_type = e.stat_type
-                WHERE e.edge > 0
+                WHERE e.edge > :min_edge
                 """
             ),
             conn,
+            params={"min_edge": min_edge},
         )
     if df.empty:
         return []
@@ -113,11 +117,12 @@ def main():
     parser.add_argument("--max-legs", type=int, default=DEFAULT_MAX_LEGS)
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
+    parser.add_argument("--min-edge", type=float, default=DEFAULT_MIN_EDGE)
     args = parser.parse_args()
 
     engine = db.get_engine()
-    legs = load_candidate_legs(engine)
-    print(f"candidate legs (positive edge): {len(legs)}")
+    legs = load_candidate_legs(engine, args.min_edge)
+    print(f"candidate legs (edge > {args.min_edge:.0%}): {len(legs)}")
 
     if not legs:
         print("No candidate legs — nothing to search (expected until prop_lines/edges have real data).")
