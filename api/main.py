@@ -145,26 +145,28 @@ def model_performance():
 
 
 @app.get("/games", response_model=list[GameOut])
-def list_games(date: date_type, sport: str = "nba"):
+def list_games(date: date_type, sport: str | None = None):
     """Tonight's (or any date's) slate — full schedule, not just legs with a
     positive edge, so external consumers (e.g. Budgerr's slate+budget glance
     view) can show every matchup even before prop_lines/edges have data.
+    Omitting sport returns every sport's games that date (in-season sports
+    rotate through the year; the consumer shouldn't have to know which is on).
     """
+    query = """
+        SELECT g.game_id, g.sport, g.date,
+               ht.team_id, ht.name, at.team_id, at.name, g.status
+        FROM games g
+        JOIN teams ht ON ht.team_id = g.home_team_id
+        JOIN teams at ON at.team_id = g.away_team_id
+        WHERE g.date = :date
+    """
+    params = {"date": date}
+    if sport is not None:
+        query += " AND g.sport = :sport"
+        params["sport"] = sport
+    query += " ORDER BY g.game_id"
     with engine.begin() as conn:
-        rows = conn.execute(
-            text(
-                """
-                SELECT g.game_id, g.sport, g.date,
-                       ht.team_id, ht.name, at.team_id, at.name, g.status
-                FROM games g
-                JOIN teams ht ON ht.team_id = g.home_team_id
-                JOIN teams at ON at.team_id = g.away_team_id
-                WHERE g.date = :date AND g.sport = :sport
-                ORDER BY g.game_id
-                """
-            ),
-            {"date": date, "sport": sport},
-        ).fetchall()
+        rows = conn.execute(text(query), params).fetchall()
     return [
         GameOut(
             game_id=r[0], sport=r[1], date=str(r[2]),
@@ -313,9 +315,23 @@ def list_parlay_recommendations(limit: int = 10):
             {"limit": limit},
         ).fetchall()
 
+    parlays = [(r, r[5] if isinstance(r[5], list) else json.loads(r[5])) for r in rows]
+
+    # Legs are stored with player_id only; resolve names in one query so
+    # consumers (Budgerr's Tonight view) can render them directly.
+    player_ids = {leg["player_id"] for _, legs_raw in parlays for leg in legs_raw}
+    names = {}
+    if player_ids:
+        with engine.begin() as conn:
+            names = dict(
+                conn.execute(
+                    text("SELECT player_id, name FROM players WHERE player_id = ANY(:ids)"),
+                    {"ids": list(player_ids)},
+                ).fetchall()
+            )
+
     results = []
-    for r in rows:
-        legs_raw = r[5] if isinstance(r[5], list) else json.loads(r[5])
+    for r, legs_raw in parlays:
         results.append(
             ParlayRecommendationOut(
                 parlay_id=r[0],
@@ -323,7 +339,7 @@ def list_parlay_recommendations(limit: int = 10):
                 target_payout=r[2],
                 joint_prob=r[3],
                 combined_odds=r[4],
-                legs=[ParlayLeg(**leg) for leg in legs_raw],
+                legs=[ParlayLeg(**leg, player_name=names.get(leg["player_id"])) for leg in legs_raw],
             )
         )
     return results

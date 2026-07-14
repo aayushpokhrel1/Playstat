@@ -100,6 +100,7 @@ class EdgeOut(BaseModel):
 
 class ParlayLeg(BaseModel):
     player_id: int
+    player_name: str | None = None  # resolved at read time, not stored in legs JSONB
     game_id: int
     stat_type: str
     side: str
