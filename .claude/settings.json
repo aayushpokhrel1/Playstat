@@ -1,4 +1,7 @@
 {
+  "enabledPlugins": {
+    "caveman@caveman": true
+  },
   "hooks": {
     "PreToolUse": [
       {
