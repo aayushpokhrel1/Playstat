@@ -9,6 +9,7 @@ from sqlalchemy import text
 from api.schemas import (
     BacktestRunOut,
     BoxScoreOut,
+    ClvSummaryOut,
     EdgeOut,
     GameLogEntry,
     GameOut,
@@ -343,6 +344,31 @@ def list_parlay_recommendations(limit: int = 10):
             )
         )
     return results
+
+
+@app.get("/clv-summary", response_model=list[ClvSummaryOut])
+def clv_summary():
+    """Closing-line value by stat type (multi-snapshot edges only) — the
+    leading indicator of whether flagged edges are real. Positive avg CLV
+    means the market keeps moving toward our positions after we flag them.
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT stat_type, COUNT(*) AS n, AVG(clv) AS avg_clv,
+                       AVG((clv > 0)::int) AS pct_positive
+                FROM clv_records
+                WHERE n_snapshots > 1
+                GROUP BY stat_type
+                ORDER BY stat_type
+                """
+            )
+        ).fetchall()
+    return [
+        ClvSummaryOut(stat_type=r[0], n=r[1], avg_clv=float(r[2]), pct_positive=float(r[3]))
+        for r in rows
+    ]
 
 
 @app.get("/backtest-history", response_model=list[BacktestRunOut])

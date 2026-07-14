@@ -52,9 +52,17 @@ def run_backtest(engine, stat):
 
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sport", choices=["all"] + sorted({s for _, _, s in STAT_CONFIG.values()}),
+                        default="all")
+    args = parser.parse_args()
+
     engine = db.get_engine()
-    for stat in STAT_CONFIG:
-        run_backtest(engine, stat)
+    for stat, (_, _, sport) in STAT_CONFIG.items():
+        if args.sport in ("all", sport):
+            run_backtest(engine, stat)
 
 
 if __name__ == "__main__":

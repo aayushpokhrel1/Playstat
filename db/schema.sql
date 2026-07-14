@@ -5,8 +5,8 @@
 -- deterministic per-sport ID offset (see SPORTS in ingestion/config.py) — nba +0,
 -- so all pre-multi-sport rows are unchanged.
 -- Applied migrations: db/migrations/001_multi_sport.sql,
--- db/migrations/002_team_game_markets.sql (a fresh install of this file needs
--- no migrations).
+-- db/migrations/002_team_game_markets.sql, db/migrations/003_clv.sql
+-- (a fresh install of this file needs no migrations).
 
 CREATE TABLE teams (
     team_id     INTEGER PRIMARY KEY,
@@ -118,7 +118,7 @@ CREATE TABLE model_predictions (
     PRIMARY KEY (player_id, game_id, stat_type, model_version)
 );
 
--- Model probability vs. de-vigged sportsbook implied probability. Populated in a later phase.
+-- Model probability vs. de-vigged sportsbook implied probability.
 CREATE TABLE edges (
     player_id       INTEGER REFERENCES players(player_id),
     game_id         INTEGER REFERENCES games(game_id),
@@ -127,6 +127,26 @@ CREATE TABLE edges (
     implied_prob    NUMERIC,
     edge            NUMERIC,
     side            TEXT CHECK (side IN ('over', 'under')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),  -- first flagged; upserts preserve it
+    PRIMARY KEY (player_id, game_id, stat_type)
+);
+
+-- Closing-line value per finished-game edge (migration 003, modeling/clv.py):
+-- de-vigged implied prob of our side at close minus at flag time; positive =
+-- the market moved toward us. The leading indicator of real edge quality.
+CREATE TABLE clv_records (
+    player_id             INTEGER REFERENCES players(player_id),
+    game_id               INTEGER REFERENCES games(game_id),
+    stat_type             TEXT NOT NULL,
+    side                  TEXT NOT NULL,
+    rec_odds              INTEGER,
+    rec_implied_prob      NUMERIC,
+    closing_odds          INTEGER,
+    closing_implied_prob  NUMERIC,
+    clv                   NUMERIC,
+    n_snapshots           INTEGER,
+    rec_at                TIMESTAMPTZ,
+    closing_pulled_at     TIMESTAMPTZ,
     PRIMARY KEY (player_id, game_id, stat_type)
 );
 

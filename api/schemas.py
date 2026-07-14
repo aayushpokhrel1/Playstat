@@ -117,6 +117,13 @@ class ParlayRecommendationOut(BaseModel):
     legs: list[ParlayLeg]
 
 
+class ClvSummaryOut(BaseModel):
+    stat_type: str
+    n: int
+    avg_clv: float
+    pct_positive: float
+
+
 class BacktestRunOut(BaseModel):
     run_id: int
     run_at: str

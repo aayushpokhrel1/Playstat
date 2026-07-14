@@ -205,27 +205,38 @@ def compute_features(engine, sport="nba", upcoming_days=0):
 
     # rolling_player_features is long format: one row per non-null feature,
     # booleans stored as 0/1 numerics (the models always consumed them as floats).
+    # Values are batched into one executemany-style INSERT — row-at-a-time
+    # upserts took ~35 minutes for a single MLB season, which doesn't survive
+    # multi-season history on a daily schedule.
+    values = []
     rows = 0
-    with engine.begin() as conn:
-        for record in stats.to_dict("records"):
-            for col in feature_cols:
-                v = record.get(col)
-                if v is None or (isinstance(v, float) and pd.isna(v)):
-                    continue
-                db.upsert(
-                    conn,
-                    "rolling_player_features",
-                    ["player_id", "as_of_date", "feature"],
-                    {
-                        "player_id": record["player_id"],
-                        "as_of_date": record["date"].date(),
-                        "feature": col,
-                        "value": float(v),
-                    },
-                )
-            rows += 1
+    for record in stats.to_dict("records"):
+        for col in feature_cols:
+            v = record.get(col)
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                continue
+            values.append(
+                {
+                    "player_id": record["player_id"],
+                    "as_of_date": record["date"].date(),
+                    "feature": col,
+                    "value": float(v),
+                }
+            )
+        rows += 1
 
-    print(f"({sport}) rolling_player_features: upserted feature rows for {rows} player-games"
+    if values:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO rolling_player_features (player_id, as_of_date, feature, value) "
+                    "VALUES (:player_id, :as_of_date, :feature, :value) "
+                    "ON CONFLICT (player_id, as_of_date, feature) DO UPDATE SET value = EXCLUDED.value"
+                ),
+                values,
+            )
+
+    print(f"({sport}) rolling_player_features: upserted {len(values)} feature rows for {rows} player-games"
           + (f" (incl. upcoming through +{upcoming_days}d)" if upcoming_days else ""))
 
 
