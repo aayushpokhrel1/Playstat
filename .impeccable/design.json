@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-14T06:23:01Z",
+  "title": "Design System: Playstat",
+  "extensions": {
+    "colorMeta": {
+      "ink-black": { "role": "neutral", "displayName": "Ink Black", "canonical": "oklch(0.09 0 0)", "tonalRamp": ["oklch(0.04 0 0)", "oklch(0.09 0 0)", "oklch(0.14 0.004 150)", "oklch(0.185 0.005 150)", "oklch(0.26 0.006 150)", "oklch(0.45 0.006 150)", "oklch(0.60 0.006 150)", "oklch(0.75 0.006 150)"] },
+      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "oklch(0.14 0.004 150)", "tonalRamp": ["oklch(0.09 0 0)", "oklch(0.14 0.004 150)", "oklch(0.185 0.005 150)", "oklch(0.26 0.006 150)"] },
+      "surface-raised": { "role": "neutral", "displayName": "Surface Raised", "canonical": "oklch(0.185 0.005 150)" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "oklch(0.96 0.004 150)", "tonalRamp": ["oklch(0.60 0.006 150)", "oklch(0.75 0.006 150)", "oklch(0.85 0.005 150)", "oklch(0.96 0.004 150)"] },
+      "muted": { "role": "neutral", "displayName": "Muted", "canonical": "oklch(0.60 0.006 150)" },
+      "border": { "role": "neutral", "displayName": "Border", "canonical": "oklch(0.26 0.006 150)" },
+      "signal-green": { "role": "primary", "displayName": "Signal Green", "canonical": "oklch(0.72 0.16 150)", "tonalRamp": ["oklch(0.30 0.10 150)", "oklch(0.40 0.13 150)", "oklch(0.50 0.14 150)", "oklch(0.62 0.16 150)", "oklch(0.72 0.16 150)", "oklch(0.82 0.13 150)", "oklch(0.90 0.09 150)", "oklch(0.95 0.05 150)"] },
+      "signal-green-deep": { "role": "primary", "displayName": "Signal Green Deep", "canonical": "oklch(0.50 0.14 150)" },
+      "edge-amber": { "role": "secondary", "displayName": "Edge Amber", "canonical": "oklch(0.75 0.15 70)", "tonalRamp": ["oklch(0.35 0.10 70)", "oklch(0.45 0.13 70)", "oklch(0.55 0.14 70)", "oklch(0.65 0.15 70)", "oklch(0.75 0.15 70)", "oklch(0.84 0.12 70)", "oklch(0.91 0.08 70)", "oklch(0.96 0.04 70)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page-level headers only (player/team name at top of a detail view). Rare." },
+      "headline": { "displayName": "Headline", "purpose": "Section headers, e.g. \"Tonight's Edges\"." },
+      "body": { "displayName": "Body", "purpose": "Prose and descriptions, capped 65-75ch." },
+      "label": { "displayName": "Label", "purpose": "Column headers, metadata tags, timestamps." },
+      "data": { "displayName": "Data", "purpose": "Every stat, line, odd, prediction, and edge value; always tabular-figure monospace." }
+    },
+    "shadows": [
+      { "name": "signal-glow", "value": "0 0 0 1px oklch(0.72 0.16 150 / 0.4), 0 4px 16px oklch(0.72 0.16 150 / 0.15)", "purpose": "Behind an actively-selected edge or the primary CTA on hover. Never on neutral elements." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default easing for state transitions and hover feedback." },
+      { "name": "duration-fast", "value": "120ms", "purpose": "Hover/focus state changes." },
+      { "name": "duration-standard", "value": "200ms", "purpose": "Panel/row transitions, data updates." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single primary action on a screen (e.g. \"Generate parlay\").",
+      "html": "<button class=\"ds-btn-primary\">Generate parlay</button>",
+      "css": ".ds-btn-primary { background: var(--signal-green, oklch(0.72 0.16 150)); color: var(--ink-black, oklch(0.09 0 0)); font-family: var(--font-geist-sans); font-weight: 500; font-size: 0.9375rem; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; transition: background 120ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: var(--signal-green-deep, oklch(0.50 0.14 150)); } .ds-btn-primary:focus-visible { outline: 1px solid var(--signal-green, oklch(0.72 0.16 150)); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary actions — view detail, dismiss.",
+      "html": "<button class=\"ds-btn-ghost\">View detail</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: var(--ink, oklch(0.96 0.004 150)); font-family: var(--font-geist-sans); font-weight: 500; font-size: 0.9375rem; padding: 10px 20px; border: 1px solid var(--border, oklch(0.26 0.006 150)); border-radius: 4px; cursor: pointer; transition: border-color 120ms cubic-bezier(0.4,0,0.2,1), background 120ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-ghost:hover { background: var(--surface-raised, oklch(0.185 0.005 150)); border-color: var(--ink, oklch(0.96 0.004 150)); }"
+    },
+    {
+      "name": "Edge Badge",
+      "kind": "chip",
+      "refersTo": "badge-edge",
+      "description": "Flags a line worth a second look — calibration warning, moved line, correlation risk.",
+      "html": "<span class=\"ds-badge-edge\">Line moved</span>",
+      "css": ".ds-badge-edge { display: inline-flex; align-items: center; background: var(--edge-amber, oklch(0.75 0.15 70)); color: var(--ink-black, oklch(0.09 0 0)); font-family: var(--font-geist-sans); font-weight: 500; font-size: 0.75rem; letter-spacing: 0.02em; padding: 2px 10px; border-radius: 999px; }"
+    },
+    {
+      "name": "Data Row",
+      "kind": "custom",
+      "refersTo": "data-row",
+      "description": "A single scannable row: player/stat label + monospace tabular prediction vs. line vs. edge.",
+      "html": "<div class=\"ds-data-row\"><span class=\"ds-data-row-label\">Player Name · PTS</span><span class=\"ds-data-row-value\">27.4</span><span class=\"ds-data-row-value ds-data-row-edge\">+5.2%</span></div>",
+      "css": ".ds-data-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 16px; border-radius: 6px; transition: background 120ms cubic-bezier(0.4,0,0.2,1); } .ds-data-row:hover { background: var(--surface-raised, oklch(0.185 0.005 150)); } .ds-data-row-label { font-family: var(--font-geist-sans); font-size: 0.9375rem; color: var(--ink, oklch(0.96 0.004 150)); } .ds-data-row-value { font-family: var(--font-geist-mono); font-variant-numeric: tabular-nums; font-size: 0.9375rem; font-weight: 500; color: var(--muted, oklch(0.60 0.006 150)); } .ds-data-row-edge { color: var(--signal-green, oklch(0.72 0.16 150)); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Search / filter field.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Search players\" />",
+      "css": ".ds-input { background: var(--surface-raised, oklch(0.185 0.005 150)); color: var(--ink, oklch(0.96 0.004 150)); font-family: var(--font-geist-sans); font-size: 0.9375rem; padding: 10px 14px; border: 1px solid var(--border, oklch(0.26 0.006 150)); border-radius: 4px; } .ds-input::placeholder { color: var(--muted, oklch(0.60 0.006 150)); } .ds-input:focus-visible { outline: none; border-color: var(--signal-green, oklch(0.72 0.16 150)); }"
+    },
+    {
+      "name": "Nav Item",
+      "kind": "nav",
+      "refersTo": "nav",
+      "description": "Top or bottom navigation item with a signal-green active underline.",
+      "html": "<a class=\"ds-nav-item ds-nav-item-active\" href=\"#\">Edges</a>",
+      "css": ".ds-nav-item { font-family: var(--font-geist-sans); font-size: 0.75rem; font-weight: 500; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted, oklch(0.60 0.006 150)); text-decoration: none; padding-bottom: 6px; border-bottom: 2px solid transparent; transition: color 120ms cubic-bezier(0.4,0,0.2,1), border-color 120ms cubic-bezier(0.4,0,0.2,1); } .ds-nav-item:hover { color: var(--ink, oklch(0.96 0.004 150)); } .ds-nav-item-active { color: var(--ink, oklch(0.96 0.004 150)); border-bottom-color: var(--signal-green, oklch(0.72 0.16 150)); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Trading Desk at Close",
+    "overview": "Playstat reads like a terminal built by someone who trusts the numbers, not a SaaS dashboard trying to look trustworthy. The surface is near-black, quiet, and gets out of the way; the one signal color that lives on top of it — a controlled, deep green — is reserved for the moments a prediction actually clears the bar against the market. Nothing else on screen competes with that signal. Data is set in a tabular monospace so columns of odds and predicted lines line up the way a spreadsheet or a terminal would, while UI chrome (nav, labels, buttons) stays in a clean technical sans. This system explicitly rejects the generic SaaS-dashboard-in-a-box look — pastel KPI tiles, rounded-everything card grids, gradient accents — and it rejects actual sportsbook chrome — promo banners, gamified color, odds-app skins. The tone is analyst, not marketing; precision, not promotion.",
+    "keyCharacteristics": [
+      "Near-black terminal surface, restrained to a single signal color used sparingly and meaningfully",
+      "Tabular monospace for every number; sans only for UI chrome and prose",
+      "Flat by default — depth comes from tonal layering (surface steps), not shadows",
+      "Motion limited to responsive feedback: state changes and transitions, no choreography",
+      "Every colored number carries its calibration context nearby, never floats alone"
+    ],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "Signal Green appears only when a real, calibration-checked edge exists — never as branding, never on a button that isn't the primary action, never as page furniture. Its rarity is what makes it mean something.", "section": "colors" },
+      { "name": "The No-Tint-Drift Rule", "body": "Every neutral (Surface, Ink, Muted, Border) shares Signal Green's hue (150°) at near-zero chroma — one palette at every step, not a neutral gray system with a color bolted on.", "section": "colors" },
+      { "name": "The Tabular Figures Rule", "body": "Any numeral rendered in the Data role uses font-variant-numeric: tabular-nums so columns of stats stay vertically aligned.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest; depth comes from the tonal ladder. Shadows appear only as Signal Glow, and only in response to a signal-colored state.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep Signal Green reserved for real, calibration-checked edges and the one primary action per screen.",
+      "Do set every stat, line, odd, and prediction in Geist Mono with tabular figures.",
+      "Do build depth with the Ink Black → Surface → Surface Raised ladder, not shadows.",
+      "Do pair a colored number with its calibration context rather than letting a bold green figure stand alone."
+    ],
+    "donts": [
+      "Don't build the generic SaaS-dashboard-in-a-box look — no pastel KPI tiles, no rounded-everything card grids, no gradient accents.",
+      "Don't borrow sportsbook chrome — no promo banners, no gamified color, no odds-app skin.",
+      "Don't use border-left/border-right accent stripes on rows or panels.",
+      "Don't apply drop shadows on the near-black surface for routine elevation — it reads as murky, not layered.",
+      "Don't mix Edge Amber and Signal Green in the same element; they're distinct signals and must stay visually separable."
+    ]
+  }
+}

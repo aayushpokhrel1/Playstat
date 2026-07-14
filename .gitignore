@@ -7,3 +7,4 @@ myenv/
 logs/
 api.log
 api.error.log
+graphify-out/

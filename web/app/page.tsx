@@ -16,6 +16,9 @@ export default async function Home() {
     <main style={{ padding: "2rem", maxWidth: 900, margin: "0 auto" }}>
       <h1>Playstat</h1>
       <p style={{ color: "#666" }}>{teams.length} teams, {players.length} players</p>
+      <p style={{ marginTop: "0.5rem" }}>
+        <Link href="/edges">View tonight&apos;s edges &rarr;</Link>
+      </p>
 
       {teams.map((team) => (
         <section key={team.team_id} style={{ marginTop: "1.5rem" }}>
