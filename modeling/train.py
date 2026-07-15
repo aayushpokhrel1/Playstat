@@ -39,7 +39,19 @@ def stats_for_sport(sport):
     return [stat for stat, (_, _, s) in STAT_CONFIG.items() if s == sport]
 
 
+def stat_family(stat):
+    """'discrete' for MLB count stats (Poisson/negative-binomial predictive
+    distribution), 'gaussian' for NBA stats (mean + quantile-derived std)."""
+    return "discrete" if STAT_CONFIG[stat][2] == "mlb" else "gaussian"
+
+
 def model_version(stat):
+    """Per-family version string. edges.py filters model_predictions on an exact
+    match against this, so bumping it here automatically retires old rows from
+    edge computation. MLB moved to v2 when the Gaussian+quantile machinery was
+    replaced with discrete Poisson/NB distributions; NBA is untouched v1."""
+    if stat_family(stat) == "discrete":
+        return f"xgb_nbinom_{stat}_v2"
     return f"xgboost_{stat}_v1"
 
 
@@ -128,15 +140,108 @@ def _jittered_quantile(residuals, quantile, n_draws=200, seed=0):
     return float(np.mean(draws))
 
 
-def fit_models(train_df, stat):
-    """Fits the mean model on all of train_df, but the quantile models get a
-    split-conformal calibration correction — raw XGBoost quantile regression on
-    this dataset is meaningfully miscalibrated (see modeling/calibration.py findings:
-    q16 empirical coverage runs 25-33% vs. the nominal 16%), and hyperparameter
-    tuning alone doesn't fix it (tried several configs, coverage barely moved).
-    Holding out a calibration slice and correcting for the measured residual
-    quantile is the standard fix for this failure mode.
+class GaussianStatModel:
+    """NBA path — unchanged machinery: XGBoost mean model + split-conformal-
+    corrected quantile models, predicted_std derived from the corrected ~68%
+    interval. See fit_gaussian for the calibration rationale."""
+
+    family = "gaussian"
+
+    def __init__(self, mean_model, q16_model, q84_model, c16, c84):
+        self.mean_model = mean_model
+        self.q16_model = q16_model
+        self.q84_model = q84_model
+        self.c16 = c16
+        self.c84 = c84
+
+    def predict_mean(self, X):
+        return self.mean_model.predict(X)
+
+    def predict_std(self, X, mean=None):
+        q16 = self.q16_model.predict(X)
+        q84 = self.q84_model.predict(X)
+        return np.array(
+            [predicted_std_from_quantiles(lo, hi, self.c16, self.c84) for lo, hi in zip(q16, q84)]
+        )
+
+
+class DiscreteStatModel:
+    """MLB path — XGBoost Poisson-regression mean plus a per-stat NB2 dispersion
+    r estimated on a held-out calibration slice, so predicted_std is the *true*
+    std of the predictive count distribution: sqrt(mu + mu^2/r) (sqrt(mu) when
+    r is inf, i.e. plain Poisson). Downstream reconstructs the full distribution
+    from (mean, std) via modeling/distributions.py."""
+
+    family = "discrete"
+
+    def __init__(self, mean_model, r):
+        self.mean_model = mean_model
+        self.r = r  # NB2 dispersion; np.inf means Poisson (no overdispersion)
+
+    def predict_mean(self, X):
+        return self.mean_model.predict(X)
+
+    def predict_std(self, X, mean=None):
+        mu = np.asarray(self.predict_mean(X) if mean is None else mean, dtype=float)
+        mu = np.maximum(mu, 1e-6)
+        if np.isinf(self.r):
+            return np.sqrt(mu)
+        return np.sqrt(mu + mu * mu / self.r)
+
+
+def _poisson_mean_model():
+    # count:poisson predicts a nonnegative mean directly (log link) — the right
+    # objective for count stats. Seeded: this path is new, so determinism is free.
+    return xgb.XGBRegressor(objective="count:poisson", n_estimators=100, max_depth=4, random_state=0)
+
+
+def estimate_nb_dispersion(y, mu, min_r=0.1):
+    """Method-of-moments NB2 dispersion on a calibration slice.
+
+    NB2: Var(Y|mu) = mu + mu^2/r. Summing the moment identity
+    E[(y-mu)^2 - mu] = mu^2/r over the slice and solving for r gives
+        r = sum(mu^2) / sum((y-mu)^2 - mu).
+    Chosen over MLE for transparency and robustness on modest slices — it targets
+    exactly the variance the reconstruction uses, and has no optimizer to diverge.
+    A non-positive denominator means no overdispersion beyond Poisson -> r = inf.
+    min_r guards against a pathological tiny-r (absurdly fat-tailed) fit on a
+    noisy slice.
     """
+    y = np.asarray(y, dtype=float)
+    mu = np.maximum(np.asarray(mu, dtype=float), 1e-6)
+    excess = float(np.sum((y - mu) ** 2 - mu))
+    if excess <= 0:
+        return float(np.inf)
+    return max(float(np.sum(mu * mu)) / excess, min_r)
+
+
+def fit_discrete(train_df, stat):
+    """MLB fit: Poisson-objective mean model on all of train_df, plus NB2
+    dispersion r measured on a held-out calibration slice (same split pattern
+    as the conformal correction used) with means from a model that never saw
+    that slice — in-sample residuals would understate the true variance."""
+    target_col, feature_cols, _ = STAT_CONFIG[stat]
+
+    mean_model = _poisson_mean_model()
+    mean_model.fit(train_df[feature_cols], train_df[target_col])
+
+    proper_train, cal_df = split_train_test(train_df)
+    cal_model = _poisson_mean_model()
+    cal_model.fit(proper_train[feature_cols], proper_train[target_col])
+    mu_cal = np.maximum(cal_model.predict(cal_df[feature_cols]), 1e-6)
+    r = estimate_nb_dispersion(cal_df[target_col].values, mu_cal)
+
+    return DiscreteStatModel(mean_model, r)
+
+
+def fit_gaussian(train_df, stat):
+    """NBA fit (unchanged): mean model on all of train_df; the quantile models
+    get a split-conformal calibration correction — raw XGBoost quantile
+    regression on this dataset is meaningfully miscalibrated (see
+    modeling/calibration.py findings: q16 empirical coverage runs 25-33% vs. the
+    nominal 16%), and hyperparameter tuning alone doesn't fix it. Holding out a
+    calibration slice and correcting for the measured residual quantile is the
+    standard fix for this failure mode."""
     target_col, feature_cols, _ = STAT_CONFIG[stat]
     X = train_df[feature_cols]
     y = train_df[target_col]
@@ -161,7 +266,16 @@ def fit_models(train_df, stat):
     c16 = _jittered_quantile(y_cal.values - q16_model.predict(X_cal), 0.16)
     c84 = _jittered_quantile(y_cal.values - q84_model.predict(X_cal), 0.84)
 
-    return mean_model, q16_model, q84_model, c16, c84
+    return GaussianStatModel(mean_model, q16_model, q84_model, c16, c84)
+
+
+def fit_models(train_df, stat):
+    """Fits the per-family model for a stat and returns a fitted object with
+    .predict_mean(X) / .predict_std(X) / .family — MLB stats get the discrete
+    Poisson/NB path, NBA stats the original Gaussian+quantile path."""
+    if stat_family(stat) == "discrete":
+        return fit_discrete(train_df, stat)
+    return fit_gaussian(train_df, stat)
 
 
 def predicted_std_from_quantiles(q16_pred, q84_pred, c16, c84):
@@ -193,19 +307,23 @@ def main():
     train_df, test_df = split_train_test(df)
     print(f"train: {len(train_df)} rows, test: {len(test_df)} rows (cutoff date: {test_df['date'].min().date()})")
 
-    mean_model, q16_model, q84_model, c16, c84 = fit_models(train_df, stat)
-    print(f"calibration correction ({stat}): c16={c16:.2f}, c84={c84:.2f}")
+    model = fit_models(train_df, stat)
 
     X_test = test_df[feature_cols]
     y_test = test_df[target_col]
-    preds = mean_model.predict(X_test)
+    preds = model.predict_mean(X_test)
     mae = mean_absolute_error(y_test, preds)
     print(f"held-out MAE ({stat}): {mae:.2f}")
 
-    q16_preds = q16_model.predict(X_test) + c16
-    q84_preds = q84_model.predict(X_test) + c84
-    crossed = (q84_preds < q16_preds).sum()
-    print(f"quantile crossing (q84 < q16, post-calibration) on {crossed}/{len(X_test)} test rows")
+    if model.family == "discrete":
+        family = "Poisson" if np.isinf(model.r) else f"negative binomial (r={model.r:.2f})"
+        print(f"dispersion ({stat}): {family}")
+    else:
+        print(f"calibration correction ({stat}): c16={model.c16:.2f}, c84={model.c84:.2f}")
+        q16_preds = model.q16_model.predict(X_test) + model.c16
+        q84_preds = model.q84_model.predict(X_test) + model.c84
+        crossed = (q84_preds < q16_preds).sum()
+        print(f"quantile crossing (q84 < q16, post-calibration) on {crossed}/{len(X_test)} test rows")
 
     print(f"held-out test game_ids: {sorted(test_df['game_id'].unique().tolist())}")
 

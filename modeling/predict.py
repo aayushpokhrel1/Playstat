@@ -3,7 +3,7 @@ import argparse
 from sqlalchemy import text
 
 from ingestion import db
-from modeling.train import STAT_CONFIG, fit_models, load_dataset, model_version, predicted_std_from_quantiles
+from modeling.train import STAT_CONFIG, fit_models, load_dataset, model_version
 
 
 def predict_for_games(engine, game_ids, stat):
@@ -22,13 +22,15 @@ def predict_for_games(engine, game_ids, stat):
         print("No rows found for the given game_ids — do they have features computed? (see modeling/features.py)")
         return
 
-    mean_model, q16_model, q84_model, c16, c84 = fit_models(train_df, stat)
+    model = fit_models(train_df, stat)
 
     X = predict_df[feature_cols]
-    predicted_mean = mean_model.predict(X)
-    q16 = q16_model.predict(X)
-    q84 = q84_model.predict(X)
-    predicted_std = [predicted_std_from_quantiles(lo, hi, c16, c84) for lo, hi in zip(q16, q84)]
+    predicted_mean = model.predict_mean(X)
+    # For MLB (discrete family) this is the count distribution's true std —
+    # sqrt(mu) Poisson / sqrt(mu + mu^2/r) NB — so downstream reconstructs the
+    # full distribution from the two stored moments (modeling/distributions.py).
+    # For NBA it's the quantile-derived Gaussian std, unchanged.
+    predicted_std = model.predict_std(X, mean=predicted_mean)
 
     rows = 0
     with engine.begin() as conn:

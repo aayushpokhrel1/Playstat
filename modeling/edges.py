@@ -1,16 +1,9 @@
-import math
-
 import pandas as pd
-from scipy.stats import norm, poisson
 from sqlalchemy import text
 
 from ingestion import db
-from modeling.train import model_version
-
-
-# Below this predicted mean, probabilities come from a Poisson instead of a
-# Gaussian (see comment at the conversion site).
-POISSON_MEAN_CUTOFF = 5
+from modeling.distributions import prob_over
+from modeling.train import model_version, stat_family
 
 
 def odds_to_probability(american_odds):
@@ -74,19 +67,20 @@ def compute_edges(engine):
             if pd.isna(record["over_odds"]) or pd.isna(record["under_odds"]):
                 skipped_one_sided += 1
                 continue
-            # Low-mean count stats (most MLB props: 0.5/1.5 lines on hits, HRs,
-            # RBIs, ...) are right-skewed with a big mass at 0 — a Gaussian
-            # there badly overstates P(over) and manufactured positive edges on
-            # nearly every over when first run against live MLB lines. Use a
-            # Poisson at the predicted mean instead; the Gaussian remains for
-            # high-mean stats (NBA points, pitcher outs) where it's reasonable.
-            if record["predicted_mean"] < POISSON_MEAN_CUTOFF:
-                lam = max(float(record["predicted_mean"]), 0.01)
-                model_prob_over = 1 - poisson.cdf(math.floor(record["line_value"]), lam)
-            else:
-                model_prob_over = 1 - norm.cdf(
-                    record["line_value"], loc=record["predicted_mean"], scale=record["predicted_std"]
-                )
+            # MLB stats now carry a discrete predictive distribution (Poisson or
+            # negative binomial), reconstructed from the stored (mean, std)
+            # moments — this replaced the old mean<5 Poisson stopgap, which
+            # ignored predicted_std and so assumed variance = mean even on
+            # overdispersed stats (total_bases, pitcher_strikeouts, ...).
+            # P(over) is the exact discrete tail: 1 - CDF(floor(line)).
+            # NBA stats keep the Gaussian, unchanged. Shared math lives in
+            # modeling/distributions.py so evaluation code agrees with this.
+            model_prob_over = prob_over(
+                record["predicted_mean"],
+                record["predicted_std"],
+                record["line_value"],
+                stat_family(record["stat_type"]),
+            )
             model_prob_under = 1 - model_prob_over
 
             implied_over, implied_under = devig(record["over_odds"], record["under_odds"])
