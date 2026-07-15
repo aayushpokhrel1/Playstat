@@ -21,8 +21,11 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 # Providers differ per sport: nba uses API-Sports (base_url/league_id consumed
 # by ingestion/backfill.py); mlb uses MLB's official StatsAPI instead, because
 # API-Sports' baseball API has no player box scores (verified 2026-07-13) —
-# see ingestion/mlb_backfill.py. nfl is unbuilt; its API-Sports entry is an
-# unverified placeholder pending the same player-stats coverage check.
+# see ingestion/mlb_backfill.py. nfl runs on nflverse-data's static, free,
+# key-less GitHub release CSVs (schedules + player_stats) — see
+# ingestion/nfl_backfill.py, which only needs this entry's id_offset. The
+# base_url/league_id fields below are kept only as an unverified API-Sports
+# fallback reference (100 req/day quota); nfl_backfill.py does not use them.
 SPORTS = {
     "nba": {
         "base_url": "https://v1.basketball.api-sports.io",
