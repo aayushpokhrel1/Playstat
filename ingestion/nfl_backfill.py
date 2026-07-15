@@ -20,22 +20,23 @@ with sport='nfl' and every derived numeric ID shifted by SPORTS['nfl']['id_offse
 
 ID scheme (all deterministic and idempotent across re-runs):
   - teams: nflverse uses stable string abbreviations (e.g. 'KC', 'BUF'), not
-    numeric IDs. team_id = NFL_ID_OFFSET + alphabetical_index(abbreviation),
-    1-based, over the fixed 32-team set seen across the requested seasons'
-    schedule. Deterministic because the set of active abbreviations barely
-    changes and sorting is stable; a franchise relocation that renames its
-    abbreviation would need a re-run, same as any static index scheme.
+    numeric IDs. team_id = NFL_ID_OFFSET + canonical_index(abbreviation),
+    1-based, over CANONICAL_TEAMS -- a HARDCODED sorted list of the 32
+    current abbreviations, so IDs never depend on which seasons a given run
+    happens to pull. An abbreviation outside the list raises immediately:
+    historical relocations (OAK, SD, STL) appear in pre-2016 seasons, which
+    this path deliberately doesn't support -- we only need 2023+.
   - games: nflverse's own numeric ID candidates (espn, old_game_id) are
     inconsistent -- `espn` is blank for ~270 rows including the entire
     not-yet-played current season, and formats have drifted across nflverse's
     own history. Instead: game_id = NFL_ID_OFFSET + season*100000 + week*1000
-    + rank, where `rank` is the 0-based index of the game's string game_id
-    (e.g. '2024_01_KC_BAL') within its (season, week) group after sorting
-    alphabetically. This only depends on columns present for every row,
-    including future/unplayed games, and is stable because ties are broken by
-    a lexicographic sort of a value (game_id) that never changes. Max 16
-    games/week and week <= 22 (playoffs) keep `rank`/`week` well clear of
-    collisions within the 100000/1000 slot sizes.
+    + canonical_index(home_team). Within a single (season, week) each team
+    hosts at most one game, so the home team is a unique key -- and unlike a
+    rank within the week's game set, it is independent of the set's
+    membership: a cancellation (Bills-Bengals, Jan 2023) or a postponement
+    that moves a game to another week cannot shift any other game's ID.
+    Max index 32 and week <= 22 (playoffs) keep the 100000/1000 slot sizes
+    collision-free.
   - players: nflverse player_id is 'AA-BAAAAAA' (e.g. '00-0033873'); the
     trailing 7 digits are already a unique, stable numeric tail per player
     across nflverse's whole history. player_id = NFL_ID_OFFSET + int(tail).
@@ -90,6 +91,31 @@ PLAYER_STATS_URL_TMPL = (
 DEFAULT_SEASONS = "2023,2024,2025"
 REQUEST_TIMEOUT_SECONDS = 60
 
+# Canonical, HARDCODED list of the 32 current NFL abbreviations (sorted).
+# Team and game IDs are derived from a team's 1-based index in this list, so
+# they never depend on which seasons a particular run pulls. Do not reorder or
+# remove entries — that would reassign IDs existing rows are FK'd to; a future
+# relocation/rename should APPEND its new abbreviation instead.
+CANONICAL_TEAMS = [
+    "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE",
+    "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAX", "KC",
+    "LA", "LAC", "LV", "MIA", "MIN", "NE", "NO", "NYG",
+    "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS",
+]
+TEAM_INDEX = {abbr: i + 1 for i, abbr in enumerate(CANONICAL_TEAMS)}
+
+
+def _team_index(abbr):
+    try:
+        return TEAM_INDEX[abbr]
+    except KeyError:
+        raise ValueError(
+            f"team abbreviation {abbr!r} is not in CANONICAL_TEAMS — likely a "
+            "pre-2016 relocation alias (OAK/SD/STL). This path only supports "
+            "seasons 2023+; add newer abbreviations by APPENDING to the list."
+        ) from None
+
+
 # Stat columns to pull off player_stats_<season>.csv, mapped to our stat_type
 # vocabulary. Values are cast to int/float as-is (nflverse already reports
 # these as whole-number counts for these particular columns).
@@ -122,25 +148,26 @@ def _team_id_map(schedule_rows, seasons):
         if row["season"] in seasons:
             abbrevs.add(row["home_team"])
             abbrevs.add(row["away_team"])
-    return {abbr: NFL_ID_OFFSET + i + 1 for i, abbr in enumerate(sorted(abbrevs))}
+    return {abbr: NFL_ID_OFFSET + _team_index(abbr) for abbr in sorted(abbrevs)}
 
 
 def _game_id_map(schedule_rows, seasons):
-    """(season, week, nflverse game_id string) -> our integer game_id."""
+    """(season, week, nflverse game_id string) -> our integer game_id.
+
+    The integer only depends on (season, week, home_team) — see the module
+    docstring's ID-scheme rationale.
+    """
     seasons = {str(s) for s in seasons}
-    by_week = {}
+    mapping = {}
     for row in schedule_rows:
         if row["season"] not in seasons:
             continue
-        key = (row["season"], row["week"])
-        by_week.setdefault(key, []).append(row["game_id"])
-
-    mapping = {}
-    for (season, week), gids in by_week.items():
-        for rank, gid in enumerate(sorted(gids)):
-            mapping[(season, week, gid)] = (
-                NFL_ID_OFFSET + int(season) * 100_000 + int(week) * 1_000 + rank
-            )
+        mapping[(row["season"], row["week"], row["game_id"])] = (
+            NFL_ID_OFFSET
+            + int(row["season"]) * 100_000
+            + int(row["week"]) * 1_000
+            + _team_index(row["home_team"])
+        )
     return mapping
 
 
