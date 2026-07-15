@@ -255,6 +255,48 @@ Built 2026-07-13, per-user request ("will the first inning stay under 1.5 runs, 
 
 ---
 
-## Next Step
+## 14. Future Directions (architected 2026-07-15)
 
-The build-order phases are all built, the multi-sport schema migration is applied, MLB ingestion is live with the 2026 season backfilled, and live MLB prop lines are flowing into `prop_lines` (§13.1). Current focus: **MLB modeling** — extend `modeling/features.py` and `STAT_CONFIG` to MLB stats, which is the last piece between live lines and live `edges`/`parlay_recommendations`. Alongside: schedule the daily MLB jobs (box scores + odds snapshots). After that: work through §11's list as it becomes relevant, and decide whether/how to deploy this beyond localhost.
+Where the project can go next, prioritized by an architecture pass after items 1–4 of the July backlog landed (discrete MLB distributions, NFL ingestion, edge/parlay/CLV dashboard, API auth). Each item is written to be pick-up-able by a fresh session without extra context. Tiers are ordered; within a tier, order is a suggestion.
+
+### 14.1 Trust the numbers first (highest value, ready now)
+
+- **Real-line evaluation gate**: `modeling/eval_discrete.py`'s old-vs-new comparison ran entirely on synthesized lines because no settled prop lines existed yet. Once a week or two of settled `prop_lines` accumulate (starting ~2026-07-18), re-run it against *real* lines and real outcomes, and add that join path to the script permanently. This is the single most informative unbuilt thing: it converts every downstream idea from "probably" to "measured".
+- **Bet-outcome tracking (paper-trading ledger)**: the system recommends parlays but never records whether *it would have won*. Add a small `recommendation_outcomes` table + daily settlement step (box scores already land in the same chain): for every recommended parlay and every flagged edge ≥3%, record hit/miss and P&L at the quoted odds. A month of this gives an honest ROI curve — the project's real report card, complementing CLV (which only measures market agreement, not profit). Surface it on the `/clv` page (rename to "Model performance" is already done).
+- **Test suite + CI**: there are currently **zero automated tests**. The pure-math core is highly testable and high-consequence: `modeling/distributions.py` (moment reconstruction, exact CDFs), `devig`/`odds_to_probability`, the parlay combinatorics, NFL/MLB ID mapping, `_jittered_quantile`. A pytest suite + GitHub Actions on push protects every future session's changes; today the only safety net is manual verification.
+- **Daily-job observability**: the 8:30am chain fails silently (logs only). Add a last-step heartbeat ping (healthchecks.io or a `job_runs` table row the dashboard reads) and a visible "last successful run" indicator on the dashboard, so a broken chain is noticed the same morning, not on bet day.
+- **outs_recorded dispersion refinement**: the one honest regression from the discrete cutover (log-loss 0.1786→0.1827) — fit mean-binned NB dispersion (starters vs relievers have different variance regimes) instead of one global r. Small, contained, measurable.
+
+### 14.2 Bet better (after the numbers are trusted)
+
+- **CLV-gated edge filtering**: once `clv_records` accumulate, stop treating all stat types equally — only feed the parlay optimizer stat types whose average CLV is positive (the market confirms our reads there). One WHERE clause + a README note; turns CLV from a report into a control loop.
+- **Kelly-criterion stake sizing**: edges currently say *what* to bet, never *how much*. Fractional Kelly (¼–½) from model_prob vs odds, capped, surfaced per edge and per parlay on the dashboard. Requires calibrated probabilities — hence tier 1 first.
+- **Line shopping / multi-book support**: `prop_lines` stores one consensus line per pull. SportsGameOdds returns per-book odds; storing them (additive `book` column) lets the edge computation use the *best available* price — the cheapest real ROI improvement in sports betting, no modeling required.
+- **Same-game correlation modeling**: the optimizer excludes same-game combos entirely (§6) — correct but conservative, and NFL makes it expensive (QB passing yards ↔ WR receiving yards are the marquee correlated parlays books love to sell). A simple empirical correlation matrix per stat-type pair from historical box scores, plus a Gaussian-copula joint probability, would let same-game parlays in with honest joint probabilities. Statistically meaty — opus-grade.
+- **Edge alerting**: a notification (ntfy.sh push / email) when an edge above a threshold appears on a fresh odds pull, so big edges aren't discovered hours later. Needs intraday odds pulls (currently 1×/day at 8:30) — an hourly game-day `launchd` job pulling odds + recomputing edges is the enabler and is cheap on the SGO quota.
+
+### 14.3 More markets, more sports
+
+- **NFL modeling (data is loaded, models aren't)**: 3 seasons of NFL stats are in the DB (§13.1) but `SPORT_CONFIG`/`STAT_CONFIG` have no NFL entries. Needs: rolling features tuned to 17-game seasons (3/5-game windows + multi-season training, per §13.1's caveats), NFL odds mapping in `odds_ingest.py`'s `STAT_MAPS` (verify SGO statIDs for passing/rushing/receiving markets against the live feed like MLB did), and yardage stats need a *continuous* family (normal/gamma — yards aren't counts; receptions/TDs stay discrete). Preseason starts August — this is the natural next big build.
+- **NBA October readiness** (§11 carry-overs): assists calibration follow-up (non-uniform jitter or the discrete-distribution treatment now proven on MLB — likely the better answer), the identical-predicted-mean investigation (players lacking rolling history routing to the same XGBoost leaves), and the unbuilt §4 features (injury reports, real pace/def_rating). Deadline-driven: needs to be done before tip-off ~October.
+- **First-inning model, applied**: `game_predictions` + NRFI lines exist and are served, but game-level markets never enter the parlay optimizer or the edges table. Either wire `game_lines` into a game-level edge computation (small) or deliberately park it (document which).
+- **New sports (NHL/soccer)**: the multi-sport schema + ID-offset pattern makes each new sport mostly an ingestion problem now. Only worth it when there's actual betting interest — the pipeline generalizes, attention doesn't.
+
+### 14.4 Platform (when it leaves the laptop)
+
+- **Deployment** (auth prerequisite ✅ done): the remaining decision is *where* — a $5 VPS (Postgres + launchd→systemd + caddy for HTTPS) vs Tailscale-only access to this machine (zero hosting cost, no public surface). Tailscale is the right first step for a single user; revisit if Budgerr's frontends need public access. **Decision needs the user** (recurring cost / exposure tradeoffs).
+- **Secrets hygiene at deploy time**: `.env`/`web/.env.local` are fine on a personal laptop; a deployment needs real secret management (even just systemd credentials / an env file with tight perms) and HTTPS before the API key crosses a network.
+- **Batched ingestion writers**: known debt (§13.1) — `nfl_backfill.py` (and `mlb_backfill.py`) upsert row-at-a-time; the full NFL backfill took >10 min. Copy `modeling/features.py`'s batching. Matters the day backfills become routine (new sports, re-ingests).
+- **Postgres partitioning**: already scoped in §13.2 — only at tens of millions of rows.
+
+### 14.5 Dashboard polish (steady-state improvements)
+
+- **Distribution visualization per edge**: the discrete cutover means every MLB prediction is a *full PMF* — show it. A small bar chart on an edge's row expansion (P(0), P(1), P(2)… with the line marked) makes "model prob 82%" inspectable at a glance and would surface bad predictions faster than any metric.
+- **Per-edge "why" panel** (carried from §13.2): XGBoost feature contributions per prediction.
+- **Backtest-trend chart** (§11): `backtest_runs` has been accumulating daily since 2026-07-13; once a few weeks exist, chart MAE/calibration over time on the model-performance page.
+- **Player pages for MLB/NFL**: player detail views are NBA-shaped; the generic `stats` map from `/box-scores` makes sport-aware game logs straightforward.
+- **PWA / phone layout pass**: game-day usage is a phone at a bar, not a laptop. The tables already scroll horizontally; a `manifest.json` + viewport audit gets 80% of the way.
+
+### Status snapshot (2026-07-15)
+
+Built and live: 3 MLB seasons + 3 NFL seasons ingested; 13 discrete-distribution MLB prop models (v2) + first-inning model; daily 8:30am chain; live odds → 116 edges → 10 parlay recommendations for the 7/17 slate; CLV pipeline armed (first records ~7/18); dashboard with edges/parlays/model-performance pages; API-key auth + dashboard login. First real-money checkpoint: the scheduled Friday 7/17 9:30am parlay review.
