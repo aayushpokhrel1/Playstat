@@ -14,7 +14,28 @@ export default async function Home() {
 
   return (
     <main style={{ padding: "2rem", maxWidth: 900, margin: "0 auto" }}>
-      <h1>Playstat</h1>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <h1>Playstat</h1>
+        {process.env.SESSION_SECRET ? (
+          <form method="POST" action="/api/logout">
+            <button
+              type="submit"
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                font: "inherit",
+                fontSize: "0.8rem",
+                color: "#666",
+                textDecoration: "underline",
+                cursor: "pointer",
+              }}
+            >
+              Log out
+            </button>
+          </form>
+        ) : null}
+      </div>
       <p style={{ color: "#666" }}>{teams.length} teams, {players.length} players</p>
       <p style={{ marginTop: "0.5rem" }}>
         <Link href="/edges">View tonight&apos;s edges &rarr;</Link>

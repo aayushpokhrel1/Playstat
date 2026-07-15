@@ -127,6 +127,8 @@ Built as a FastAPI backend (`api/`) + Next.js web dashboard (`web/`) — the "we
 
 `GET /edges` and `GET /parlay-recommendations` are also consumed by a separate project, [Budgerr](https://github.com/aayushpokhrel1/Budgerr) (a personal budgeting app with betting baked in) — its bet quick-entry form pre-fills a leg's player/stat/line/side/odds straight from `/edges`. This is a one-way, read-only dependency: no shared database, no write access back into playstat, just an HTTP call from Budgerr's frontends. `CORSMiddleware` is configured (`CORS_ORIGINS` env var) specifically so Budgerr's browser-based frontend can call it directly.
 
+**Auth**: when `AUTH_ENABLED=true` on the API, every endpoint requires an `X-API-Key` header matching one of the keys in `PLAYSTAT_API_KEYS` (comma-separated `name:key` pairs — Budgerr gets its own named key, e.g. `budgerr:<key>`, so it can be revoked independently of the dashboard's). CORS already allows the header (`allow_headers=["*"]`), so preflighted browser requests work. Budgerr has two options for supplying it: (a) embed the key in its browser frontend — acceptable for strictly personal/local use, but the key is visible to anyone who can open devtools; or (b) **recommended**: proxy Playstat calls through Budgerr's own backend, which attaches the key server-side and keeps it out of the browser entirely.
+
 ---
 
 ## 8. Build Order — status
@@ -167,6 +169,13 @@ The project lives under `~/dev/playstat`, not `~/Documents` — `~/Documents` is
 
 The `com.playstat.api` service does **not** run with `--reload` — code changes to `api/` require a manual restart to take effect: `launchctl kickstart -k gui/$(id -u)/com.playstat.api`. Forgetting this step makes it look like a change didn't work when it's actually just not loaded yet.
 
+### Auth
+
+Both halves are **off by default** — with the env vars unset, everything behaves exactly as before.
+
+- **API** (`.env` / launchd env): set `AUTH_ENABLED=true` and `PLAYSTAT_API_KEYS=dashboard:<key>,budgerr:<key>` (comma-separated `name:key` pairs; names are per-consumer labels for revocation). Every endpoint then requires a matching `X-API-Key` header and returns 401 otherwise.
+- **Dashboard** (`web/.env.local`, gitignored — see `web/.env.local.example`): `PLAYSTAT_API_KEY` (the dashboard's key, attached server-side by `web/app/lib/api.ts`; it never reaches the browser), `DASHBOARD_USER`, `DASHBOARD_PASSWORD_HASH`, and `SESSION_SECRET` (random hex; unset = login disabled). Generate the password hash with `node web/scripts/hash-password.mjs <password>` (format `scrypt$<salt_hex>$<hash_hex>`) and a secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Sessions are HMAC-signed httpOnly cookies (`playstat_session`, 7 days), verified by `web/proxy.ts` (Next 16's renamed middleware); log out via the home-page link (POST `/api/logout`).
+
 ---
 
 ## 11. Known Issues & Follow-ups
@@ -187,7 +196,7 @@ Everything below is a known, already-diagnosed gap — not a surprise to redisco
 
 **Dashboard / API**
 - **No edge/parlay UI in the Next.js dashboard** — `web/` only has team/player browsing and predictions-vs-actuals (Phase 7 deliberately skipped this since `edges`/`parlay_recommendations` were empty at build time). Worth adding once real data exists to show.
-- **No auth on any API endpoint** — fine for localhost-only dev, not fine before either Playstat's or Budgerr's API leaves personal/local use.
+- **No auth — RESOLVED (2026-07-15)**: the API now takes an `X-API-Key` header checked by a global FastAPI dependency (`api/auth.py`), gated by `AUTH_ENABLED` (unset/false = old open behavior, one env flip reverts) with keys in `PLAYSTAT_API_KEYS` (`name:key` pairs per consumer). The dashboard has a single-user login (`/login`) with an scrypt-hashed password and an HMAC-signed 7-day session cookie, enforced by `web/proxy.ts` and gated the same way: unset `SESSION_SECRET` disables it. See §10's Auth subsection and §7.1 for the Budgerr key options.
 - **No backtest-trend chart** — only a handful of `backtest_runs` rows exist so far; a chart showing MAE/calibration over time is worth building once a couple weeks of daily runs have accumulated enough points to show a real trend.
 
 **Budgerr integration**

@@ -71,8 +71,15 @@ export type ClvSummary = {
   pct_positive: number;
 };
 
+// Server-only: apiGet is called exclusively from server components, so the
+// key never reaches the browser.
+function apiHeaders(): HeadersInit | undefined {
+  const key = process.env.PLAYSTAT_API_KEY;
+  return key ? { "X-API-Key": key } : undefined;
+}
+
 async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store", headers: apiHeaders() });
   if (!res.ok) {
     throw new Error(`API request failed: ${path} (${res.status})`);
   }
@@ -88,7 +95,10 @@ export function getPlayers() {
 }
 
 export async function getPlayer(playerId: number): Promise<Player | null> {
-  const res = await fetch(`${API_BASE_URL}/players/${playerId}`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE_URL}/players/${playerId}`, {
+    cache: "no-store",
+    headers: apiHeaders(),
+  });
   if (res.status === 404) {
     return null;
   }
