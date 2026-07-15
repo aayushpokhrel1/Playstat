@@ -19,6 +19,9 @@ export default async function Home() {
       <p style={{ marginTop: "0.5rem" }}>
         <Link href="/edges">View tonight&apos;s edges &rarr;</Link>
       </p>
+      <p style={{ marginTop: "0.5rem" }}>
+        <Link href="/clv">View model performance &rarr;</Link>
+      </p>
 
       {teams.map((team) => (
         <section key={team.team_id} style={{ marginTop: "1.5rem" }}>

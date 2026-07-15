@@ -64,6 +64,13 @@ export type ParlayRecommendation = {
   legs: ParlayLeg[];
 };
 
+export type ClvSummary = {
+  stat_type: string;
+  n: number;
+  avg_clv: number;
+  pct_positive: number;
+};
+
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store" });
   if (!res.ok) {
@@ -105,4 +112,8 @@ export function getEdges() {
 
 export function getParlayRecommendations() {
   return apiGet<ParlayRecommendation[]>("/parlay-recommendations");
+}
+
+export function getClvSummary() {
+  return apiGet<ClvSummary[]>("/clv-summary");
 }

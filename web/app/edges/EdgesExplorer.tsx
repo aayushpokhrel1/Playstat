@@ -3,30 +3,11 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { Edge } from "../lib/api";
+import { statLabel } from "../lib/statLabels";
 import styles from "./edges.module.css";
 
 type SortKey = "edge" | "model_prob" | "odds" | "line_value";
 type SortDirection = "asc" | "desc";
-
-const STAT_LABELS: Record<string, string> = {
-  hits: "Hits",
-  rbis: "RBIs",
-  runs: "Runs",
-  walks: "Walks",
-  total_bases: "Total bases",
-  batter_strikeouts: "Batter Ks",
-  pitcher_strikeouts: "Pitcher Ks",
-  home_runs: "Home runs",
-  stolen_bases: "Stolen bases",
-  earned_runs: "Earned runs",
-  walks_allowed: "Walks allowed",
-  hits_allowed: "Hits allowed",
-  outs_recorded: "Outs recorded",
-};
-
-function statLabel(statType: string): string {
-  return STAT_LABELS[statType] ?? statType.replace(/_/g, " ");
-}
 
 function formatOdds(odds: number): string {
   return odds > 0 ? `+${odds}` : `${odds}`;
