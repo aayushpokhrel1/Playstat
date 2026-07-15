@@ -15,12 +15,17 @@ def run_backtest(engine, stat):
         return
 
     train_df, test_df = split_train_test(df)
-    mean_model, _, _, _, _ = fit_models(train_df, stat)
+    model = fit_models(train_df, stat)
 
     X_test = test_df[feature_cols]
     y_test = test_df[target_col]
-    mae = mean_absolute_error(y_test, mean_model.predict(X_test))
+    mae = mean_absolute_error(y_test, model.predict_mean(X_test))
 
+    # For discrete (MLB) stats coverage_16/84 are the empirical coverage of the
+    # discrete distribution's 16th/84th percentiles — expected to overshoot the
+    # nominal levels on lumpy counts; check_coverage prints the model-expected
+    # coverage alongside so the stored numbers stay interpretable. Same columns,
+    # no schema change.
     coverage = check_coverage(engine, stat)
     if coverage is None:
         coverage_16, coverage_84 = None, None

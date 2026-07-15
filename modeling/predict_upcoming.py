@@ -19,7 +19,6 @@ from modeling.train import (
     fit_models,
     load_dataset,
     model_version,
-    predicted_std_from_quantiles,
     stats_for_sport,
 )
 
@@ -67,7 +66,7 @@ def predict_upcoming(engine, sport, days=2):
         if len(history) < 100:
             print(f"({stat}) only {len(history)} historical rows — skipping until more data exists.")
             continue
-        mean_model, q16_model, q84_model, c16, c84 = fit_models(history, stat)
+        model = fit_models(history, stat)
 
         X = upcoming.copy()
         for col in feature_cols:
@@ -82,14 +81,15 @@ def predict_upcoming(engine, sport, days=2):
         if X.empty:
             continue
 
-        preds = mean_model.predict(X[feature_cols])
-        q16 = q16_model.predict(X[feature_cols])
-        q84 = q84_model.predict(X[feature_cols])
+        preds = model.predict_mean(X[feature_cols])
+        # MLB: the discrete distribution's true std (Poisson/NB moments,
+        # reconstructed downstream via modeling/distributions.py).
+        # NBA: quantile-derived Gaussian std, unchanged.
+        stds = model.predict_std(X[feature_cols], mean=preds)
 
         rows = 0
         with engine.begin() as conn:
-            for (_, record), mean, lo, hi in zip(X.iterrows(), preds, q16, q84):
-                std = predicted_std_from_quantiles(lo, hi, c16, c84)
+            for (_, record), mean, std in zip(X.iterrows(), preds, stds):
                 conn.execute(
                     text(
                         """
