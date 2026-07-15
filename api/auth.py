@@ -13,7 +13,16 @@ Clients send the key in the `X-API-Key` header.
 import os
 import secrets
 
+from dotenv import load_dotenv
 from fastapi import HTTPException, Request
+
+# This module reads its config at import time, and main.py imports it before
+# anything that touches ingestion.config (whose load_dotenv() call is what
+# populates the environment under launchd, where no shell profile exports
+# these). Load .env here explicitly — load_dotenv is idempotent and never
+# overrides already-set variables — so import order can't silently leave auth
+# disabled in the deployed service.
+load_dotenv()
 
 AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "").strip().lower() in ("true", "1", "yes")
 
