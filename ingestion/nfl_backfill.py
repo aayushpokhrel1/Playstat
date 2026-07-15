@@ -12,7 +12,7 @@ use with attribution, which this docstring provides.
 
 Sources (no auth, plain HTTPS GET):
   - schedules: https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv
-  - player box scores: https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_<season>.csv
+  - player box scores: https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_<season>.csv
 
 Writes to the same tables as ingestion/backfill.py and ingestion/mlb_backfill.py,
 with sport='nfl' and every derived numeric ID shifted by SPORTS['nfl']['id_offset']
@@ -57,8 +57,8 @@ rows from both files.
 Stat vocabulary (long-format player_game_stats.stat_type, aligned to prop
 markets, mirroring the MLB module's docstring convention):
     passing_yards, passing_tds, interceptions_thrown (nflverse's
-    'interceptions' column, renamed here to avoid colliding with a future
-    defensive-interceptions stat_type), completions, pass_attempts,
+    'passing_interceptions' column; 'def_interceptions' exists separately
+    and is deliberately not ingested), completions, pass_attempts,
     rushing_yards, rushing_tds, carries, receiving_yards, receiving_tds,
     receptions, targets.
 
@@ -68,7 +68,7 @@ stored as 'FT' to match the existing API/Budgerr convention, 'NS' otherwise
 
 Player-week rows for players who changed teams mid-week (rare, e.g. a
 Tuesday/Wednesday trade before a Thursday game) are handled by joining to the
-schedule on (season, week, team) using the stat row's own `recent_team`
+schedule on (season, week, team) using the stat row's own `team`
 column, so each stint's game_id is resolved independently per row.
 """
 
@@ -84,11 +84,20 @@ from ingestion.config import SPORTS
 NFL_ID_OFFSET = SPORTS["nfl"]["id_offset"]
 
 SCHEDULES_URL = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv"
+# nflverse retired the old `player_stats` release assets partway through 2025
+# (player_stats_2025.csv 404s); the `stats_player` release carries all seasons
+# under a renamed schema (recent_team -> team, interceptions ->
+# passing_interceptions). All seasons are pulled from the new asset so there is
+# exactly one schema to map.
 PLAYER_STATS_URL_TMPL = (
-    "https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_{season}.csv"
+    "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
 )
 
 DEFAULT_SEASONS = "2023,2024,2025"
+
+# Only these position groups produce the offensive stats our prop-market
+# vocabulary covers (see STAT_COLUMN_MAP).
+OFFENSE_POSITION_GROUPS = {"QB", "RB", "WR", "TE"}
 REQUEST_TIMEOUT_SECONDS = 60
 
 # Canonical, HARDCODED list of the 32 current NFL abbreviations (sorted).
@@ -122,7 +131,7 @@ def _team_index(abbr):
 STAT_COLUMN_MAP = {
     "passing_yards": "passing_yards",
     "passing_tds": "passing_tds",
-    "interceptions_thrown": "interceptions",
+    "interceptions_thrown": "passing_interceptions",
     "completions": "completions",
     "pass_attempts": "attempts",
     "rushing_yards": "rushing_yards",
@@ -236,7 +245,15 @@ def backfill_player_stats(engine, seasons, team_ids, game_ids, only_weeks=None):
             for row in stat_rows:
                 if not row.get("player_id") or not row.get("week", "").isdigit():
                     continue
-                team_abbr = row.get("recent_team")
+                # The stats_player_week files cover every rostered player;
+                # defenders/OL/kickers carry literal 0s in all offensive
+                # columns, and no prop market in our stat vocabulary quotes
+                # them — skip so player_game_stats doesn't fill with zero rows
+                # (~60% of the file) that features.py would later compute
+                # rolling averages over.
+                if row.get("position_group") not in OFFENSE_POSITION_GROUPS:
+                    continue
+                team_abbr = row.get("team")
                 if team_abbr not in team_ids:
                     continue  # team not in this run's schedule pull (e.g. an old alias)
 
