@@ -60,6 +60,7 @@ def compute_edges(engine):
 
     rows = 0
     skipped_one_sided = 0
+    fresh_keys = []
     with engine.begin() as conn:
         for record in merged.to_dict("records"):
             # A book listing only one side (~8% of live MLB lines) can't be
@@ -127,9 +128,44 @@ def compute_edges(engine):
                 },
             )
             rows += 1
+            fresh_keys.append(
+                (int(record["player_id"]), int(record["game_id"]), record["stat_type"])
+            )
+
+        # Prune stale rows: an upsert-only table keeps an edge alive forever
+        # after its line stops being quoted, its prediction is retired (e.g. a
+        # model_version bump), or it becomes one-sided — and those ghosts feed
+        # the parlay optimizer. Delete edges for games that haven't been played
+        # whose (player, game, stat) this run didn't reproduce. Finished games'
+        # edges are kept as the historical record CLV scoring reads; surviving
+        # keys keep their created_at (the CLV baseline) via the upsert above.
+        stale = conn.execute(
+            text(
+                """
+                DELETE FROM edges e
+                USING games g
+                WHERE g.game_id = e.game_id AND g.status != 'FT'
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM unnest(
+                        CAST(:pids AS bigint[]), CAST(:gids AS bigint[]), CAST(:stats AS text[])
+                    ) AS f(player_id, game_id, stat_type)
+                    WHERE f.player_id = e.player_id
+                      AND f.game_id = e.game_id
+                      AND f.stat_type = e.stat_type
+                  )
+                """
+            ),
+            {
+                "pids": [k[0] for k in fresh_keys],
+                "gids": [k[1] for k in fresh_keys],
+                "stats": [k[2] for k in fresh_keys],
+            },
+        ).rowcount if fresh_keys else 0
 
     print(f"edges: upserted {rows} rows"
-          + (f" (skipped {skipped_one_sided} one-sided lines)" if skipped_one_sided else ""))
+          + (f" (skipped {skipped_one_sided} one-sided lines)" if skipped_one_sided else "")
+          + (f" (pruned {stale} stale rows for unplayed games)" if stale else ""))
 
 
 if __name__ == "__main__":
