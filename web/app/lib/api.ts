@@ -71,6 +71,17 @@ export type ClvSummary = {
   pct_positive: number;
 };
 
+export type BetPerformance = {
+  bet_type: string;
+  n: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  total_staked: number;
+  total_pnl: number;
+  roi: number;
+};
+
 // Server-only: apiGet is called exclusively from server components, so the
 // key never reaches the browser.
 function apiHeaders(): HeadersInit | undefined {
@@ -126,4 +137,8 @@ export function getParlayRecommendations() {
 
 export function getClvSummary() {
   return apiGet<ClvSummary[]>("/clv-summary");
+}
+
+export function getBetPerformance() {
+  return apiGet<BetPerformance[]>("/bet-performance");
 }
