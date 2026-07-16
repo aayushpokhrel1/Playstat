@@ -124,6 +124,17 @@ class ClvSummaryOut(BaseModel):
     pct_positive: float
 
 
+class BetPerformanceOut(BaseModel):
+    bet_type: str
+    n: int
+    wins: int
+    losses: int
+    pushes: int
+    total_staked: float
+    total_pnl: float
+    roi: float
+
+
 class BacktestRunOut(BaseModel):
     run_id: int
     run_at: str

@@ -9,6 +9,7 @@ from sqlalchemy import text
 from api.auth import require_api_key
 from api.schemas import (
     BacktestRunOut,
+    BetPerformanceOut,
     BoxScoreOut,
     ClvSummaryOut,
     EdgeOut,
@@ -370,6 +371,54 @@ def clv_summary():
         ClvSummaryOut(stat_type=r[0], n=r[1], avg_clv=float(r[2]), pct_positive=float(r[3]))
         for r in rows
     ]
+
+
+@app.get("/bet-performance", response_model=list[BetPerformanceOut])
+def bet_performance():
+    """Paper-trading ledger aggregate (README §14.1, modeling/settle.py) — the
+    honest record of whether recommended parlays/edges would have won. One
+    row per bet_type ('parlay', 'edge') plus an 'all' row combining both.
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT bet_type,
+                       COUNT(*) AS n,
+                       SUM((result = 'win')::int) AS wins,
+                       SUM((result = 'loss')::int) AS losses,
+                       SUM((result = 'push')::int) AS pushes,
+                       SUM(stake) AS total_staked,
+                       SUM(pnl) AS total_pnl
+                FROM recommendation_outcomes
+                GROUP BY bet_type
+                ORDER BY bet_type
+                """
+            )
+        ).fetchall()
+
+    def _row(bet_type, n, wins, losses, pushes, staked, pnl):
+        staked, pnl = float(staked or 0), float(pnl or 0)
+        return BetPerformanceOut(
+            bet_type=bet_type, n=n, wins=wins, losses=losses, pushes=pushes,
+            total_staked=staked, total_pnl=pnl,
+            roi=(pnl / staked if staked else 0.0),
+        )
+
+    results = [_row(*r) for r in rows]
+    if rows:
+        results.append(
+            _row(
+                "all",
+                sum(r[1] for r in rows),
+                sum(r[2] for r in rows),
+                sum(r[3] for r in rows),
+                sum(r[4] for r in rows),
+                sum(float(r[5] or 0) for r in rows),
+                sum(float(r[6] or 0) for r in rows),
+            )
+        )
+    return results
 
 
 @app.get("/backtest-history", response_model=list[BacktestRunOut])
