@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # Dummy values so ingestion/config.py's required os.environ[...] reads
+      # succeed at import time — no real DB or API key is ever used, since
+      # the suite is pure-math only (no DB access). tests/conftest.py sets
+      # the same defaults, so this is belt-and-suspenders.
+      DATABASE_URL: postgresql+psycopg2://ci:ci@localhost:5432/ci_dummy
+      API_BASKETBALL_KEY: ci-dummy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q
