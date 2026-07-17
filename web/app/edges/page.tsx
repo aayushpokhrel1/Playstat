@@ -1,20 +1,42 @@
 import Link from "next/link";
-import { getEdges, getParlayRecommendations } from "../lib/api";
+import type { Edge, EdgeDistribution } from "../lib/api";
+import { getEdgeDistributions, getEdges, getParlayRecommendations } from "../lib/api";
 import EdgesExplorer from "./EdgesExplorer";
 import ParlaySection from "./ParlaySection";
 import RetryButton from "./RetryButton";
 import styles from "./edges.module.css";
 
+function distributionKey(e: { player_id: number; game_id: number; stat_type: string }): string {
+  return `${e.player_id}-${e.game_id}-${e.stat_type}`;
+}
+
+// Merges each edge's full PMF (from /edge-distributions) into the edge it
+// belongs to by (player_id, game_id, stat_type) — the two endpoints share
+// that key but /edge-distributions is additive, so an edge simply has no
+// `distribution` if the join finds nothing (e.g. transient timing between
+// the two queries).
+function mergeDistributions(edges: Edge[], distributions: EdgeDistribution[]) {
+  const byKey = new Map(distributions.map((d) => [distributionKey(d), d]));
+  return edges.map((e) => ({ ...e, distribution: byKey.get(distributionKey(e)) ?? null }));
+}
+
 export default async function EdgesPage() {
   let edges;
+  let distributions;
   let parlays;
   let fetchError: string | null = null;
 
   try {
-    [edges, parlays] = await Promise.all([getEdges(), getParlayRecommendations()]);
+    [edges, distributions, parlays] = await Promise.all([
+      getEdges(),
+      getEdgeDistributions(),
+      getParlayRecommendations(),
+    ]);
   } catch {
     fetchError = "Can't reach the Playstat API at localhost:8000. Make sure the service is running.";
   }
+
+  const edgesWithDistributions = edges ? mergeDistributions(edges, distributions ?? []) : [];
 
   const gameCount = edges ? new Set(edges.map((e) => e.game_id)).size : 0;
 
@@ -45,7 +67,7 @@ export default async function EdgesPage() {
         ) : (
           <>
             <section className={styles.section} aria-label="Tonight's edges">
-              <EdgesExplorer edges={edges ?? []} />
+              <EdgesExplorer edges={edgesWithDistributions} />
             </section>
 
             <section className={styles.section}>

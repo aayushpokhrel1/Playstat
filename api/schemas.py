@@ -98,6 +98,30 @@ class EdgeOut(BaseModel):
     edge: float
 
 
+class PmfPoint(BaseModel):
+    k: int
+    prob: float
+
+
+class EdgeDistributionOut(BaseModel):
+    """Full predictive PMF for a current positive edge (README §14.5) — lets
+    the dashboard draw the whole distribution behind an edge's model_prob,
+    not just the single number. `family='gaussian'` (NBA) rows carry
+    `pmf=None`; the bar chart is only meaningful for discrete (MLB) stats.
+    """
+
+    player_id: int
+    game_id: int
+    stat_type: str
+    side: str
+    family: str
+    line_value: float
+    predicted_mean: float
+    prob_over: float
+    prob_under: float
+    pmf: list[PmfPoint] | None
+
+
 class ParlayLeg(BaseModel):
     player_id: int
     player_name: str | None = None  # resolved at read time, not stored in legs JSONB

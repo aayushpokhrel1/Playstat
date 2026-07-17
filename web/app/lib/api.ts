@@ -45,6 +45,24 @@ export type Edge = {
   edge: number;
 };
 
+export type PmfPoint = {
+  k: number;
+  prob: number;
+};
+
+export type EdgeDistribution = {
+  player_id: number;
+  game_id: number;
+  stat_type: string;
+  side: "over" | "under";
+  family: "discrete" | "gaussian";
+  line_value: number;
+  predicted_mean: number;
+  prob_over: number;
+  prob_under: number;
+  pmf: PmfPoint[] | null;
+};
+
 export type ParlayLeg = {
   player_id: number;
   player_name: string | null;
@@ -129,6 +147,10 @@ export function getPlayerPredictions(playerId: number) {
 
 export function getEdges() {
   return apiGet<Edge[]>("/edges");
+}
+
+export function getEdgeDistributions() {
+  return apiGet<EdgeDistribution[]>("/edge-distributions");
 }
 
 export function getParlayRecommendations() {

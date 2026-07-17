@@ -12,6 +12,7 @@ from api.schemas import (
     BetPerformanceOut,
     BoxScoreOut,
     ClvSummaryOut,
+    EdgeDistributionOut,
     EdgeOut,
     GameLogEntry,
     GameOut,
@@ -20,10 +21,13 @@ from api.schemas import (
     ParlayLeg,
     ParlayRecommendationOut,
     PlayerOut,
+    PmfPoint,
     PredictionOut,
     TeamOut,
 )
 from ingestion.db import get_engine
+from modeling.distributions import pmf_list, prob_over
+from modeling.train import model_version, stat_family
 
 app = FastAPI(title="Playstat API", dependencies=[Depends(require_api_key)])
 
@@ -257,6 +261,78 @@ def list_edges():
         )
         for r in rows
     ]
+
+
+@app.get("/edge-distributions", response_model=list[EdgeDistributionOut])
+def edge_distributions():
+    """Full predictive PMF behind every current positive edge (README §14.5) —
+    lets the dashboard draw the whole distribution behind a "model prob 82%"
+    figure, not just that single number. Same edge set and same `prop_lines`
+    latest-pull join as /edges (mirrored exactly, including the DISTINCT ON
+    subquery); additionally joins model_predictions for (predicted_mean,
+    predicted_std) so modeling/distributions.py can reconstruct the law.
+    Read-only, additive — does not touch /edges or its response shape.
+
+    model_predictions' primary key includes model_version (old versions are
+    never deleted), so a stat can have more than one row per (player, game,
+    stat) key; we join without pinning the version in SQL and instead filter
+    in Python against modeling.train.model_version(stat), mirroring exactly
+    how modeling/edges.py's compute_edges matches predictions to the live
+    model per stat.
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT e.player_id, e.game_id, e.stat_type, e.side,
+                       pl.line_value, mp.predicted_mean, mp.predicted_std, mp.model_version
+                FROM edges e
+                JOIN (
+                    SELECT DISTINCT ON (player_id, game_id, stat_type)
+                        player_id, game_id, stat_type, line_value, over_odds, under_odds
+                    FROM prop_lines
+                    ORDER BY player_id, game_id, stat_type, pulled_at DESC
+                ) pl ON pl.player_id = e.player_id AND pl.game_id = e.game_id AND pl.stat_type = e.stat_type
+                JOIN model_predictions mp
+                  ON mp.player_id = e.player_id AND mp.game_id = e.game_id AND mp.stat_type = e.stat_type
+                WHERE e.edge > 0
+                """
+            )
+        ).fetchall()
+
+    results = []
+    for r in rows:
+        player_id, game_id, stat_type, side, line_value, predicted_mean, predicted_std, row_model_version = r
+        if row_model_version != model_version(stat_type):
+            continue  # a stale/retired model_version row for this stat — not the live prediction
+
+        family = stat_family(stat_type)
+        predicted_mean = float(predicted_mean)
+        predicted_std = float(predicted_std)
+        line_value = float(line_value)
+
+        prob_over_val = prob_over(predicted_mean, predicted_std, line_value, family)
+        prob_under_val = 1.0 - prob_over_val
+
+        pmf = None
+        if family == "discrete":
+            pmf = [PmfPoint(k=k, prob=p) for k, p in pmf_list(predicted_mean, predicted_std)]
+
+        results.append(
+            EdgeDistributionOut(
+                player_id=player_id,
+                game_id=game_id,
+                stat_type=stat_type,
+                side=side,
+                family=family,
+                line_value=line_value,
+                predicted_mean=predicted_mean,
+                prob_over=prob_over_val,
+                prob_under=prob_under_val,
+                pmf=pmf,
+            )
+        )
+    return results
 
 
 @app.get("/game-predictions", response_model=list[GamePredictionOut])
