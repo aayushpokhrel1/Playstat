@@ -1,0 +1,23 @@
+# Keep the build context small and, more importantly, keep secrets and
+# host-specific state out of the image.
+.env
+.env.*
+web/.env.local
+
+.venv/
+__pycache__/
+*.pyc
+
+.git/
+.github/
+.claude/
+
+# The Next.js dashboard is a separate service (its own build); the API image
+# doesn't serve it.
+web/
+
+# Local artifacts / generated state
+graphify-out/
+logs/
+tests/
+*.md

@@ -41,13 +41,21 @@ def _parse_keys(raw: str) -> dict[str, str]:
 
 API_KEYS = _parse_keys(os.environ.get("PLAYSTAT_API_KEYS", ""))
 
+# Paths exempt from the API-key requirement. /health is a liveness/readiness
+# probe for container healthchecks (Docker Compose / systemd), which must work
+# without provisioning a key into the healthcheck command. It returns only
+# up/down status — no data — so exempting it leaks nothing.
+PUBLIC_PATHS = frozenset({"/health"})
+
 
 def require_api_key(request: Request) -> None:
     """Global FastAPI dependency: reject requests without a valid X-API-Key.
 
-    No-op when AUTH_ENABLED is false. Never includes the presented key (or
-    any configured key) in errors or logs.
+    No-op for PUBLIC_PATHS, and when AUTH_ENABLED is false. Never includes the
+    presented key (or any configured key) in errors or logs.
     """
+    if request.url.path in PUBLIC_PATHS:
+        return
     if not AUTH_ENABLED:
         return
     presented = request.headers.get("X-API-Key", "")

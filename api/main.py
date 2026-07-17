@@ -44,6 +44,25 @@ app.add_middleware(
 engine = get_engine()
 
 
+@app.get("/health")
+def health():
+    """Liveness/readiness probe for container healthchecks (Docker Compose /
+    systemd on the deployment host). Unauthenticated by design — see
+    api/auth.py's PUBLIC_PATHS: a healthcheck command shouldn't need an API
+    key provisioned into it, and this returns status only, never data.
+
+    Checks Postgres reachability too, so an up-but-dataless API (the failure
+    mode that actually matters here — every endpoint reads the DB) reports
+    unhealthy rather than healthy.
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="database unreachable")
+    return {"status": "ok", "database": "ok"}
+
+
 @app.get("/teams", response_model=list[TeamOut])
 def list_teams():
     with engine.begin() as conn:
