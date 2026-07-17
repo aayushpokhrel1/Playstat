@@ -111,3 +111,19 @@ def discrete_ppf(mean, std, q):
     """Smallest integer k with CDF(k) >= q for the reconstructed law (the q-th
     percentile of a lumpy count). Used for discrete coverage checks."""
     return float(discrete_dist(mean, std).ppf(q))
+
+
+def pmf_list(mean, std, cover=0.999, k_cap=60):
+    """The full predictive PMF as [(k, P(X=k)), ...] for k = 0..k_max, where
+    k_max = min(discrete_ppf(mean, std, cover), k_cap) — enough bars to cover
+    `cover` of the mass without an unbounded tail for a display-sized chart.
+
+    Used by the /edge-distributions endpoint (README §14.5) so the drawn PMF
+    is exactly the same law compute_edges/prob_over_discrete use — no
+    reimplementation of the reconstruction. Guards degenerate tiny-mean cases
+    (k_max could come back 0) so callers always get at least k=0..1.
+    """
+    k_max = int(discrete_ppf(mean, std, cover))
+    k_max = max(1, min(k_max, k_cap))
+    dist = discrete_dist(mean, std)
+    return [(k, float(dist.pmf(k))) for k in range(0, k_max + 1)]

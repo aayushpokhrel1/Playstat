@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
-import type { Edge } from "../lib/api";
+import type { Edge, EdgeDistribution } from "../lib/api";
 import { statLabel } from "../lib/statLabels";
 import styles from "./edges.module.css";
+
+export type EdgeWithDistribution = Edge & { distribution: EdgeDistribution | null };
 
 type SortKey = "edge" | "model_prob" | "odds" | "line_value";
 type SortDirection = "asc" | "desc";
@@ -15,6 +17,133 @@ function formatOdds(odds: number): string {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+// Viewbox units per bar / overall chart geometry — kept in sync with the CSS
+// classes below so the SVG scales cleanly at any width via `width: 100%`.
+const BAR_UNIT = 28;
+const BAR_GAP = 4;
+const CHART_HEIGHT = 84;
+const K_LABEL_HEIGHT = 16;
+const PAD = 4;
+// SVG user-space font size for the k-axis tick labels (a geometry attribute in
+// viewBox units, scaled by the viewBox->viewport transform — not a CSS rem on
+// the DESIGN.md type ramp; see .pmfKLabel).
+const K_LABEL_FONT = 8;
+
+function pmfLabelStep(n: number): number {
+  if (n > 24) return 5;
+  if (n > 12) return 2;
+  return 1;
+}
+
+function PmfChart({
+  distribution,
+  side,
+  statType,
+}: {
+  distribution: EdgeDistribution;
+  side: "over" | "under";
+  statType: string;
+}) {
+  const pmf = distribution.pmf;
+  if (!pmf || pmf.length === 0) return null;
+
+  // "Over" means X > line, i.e. X >= floor(line) + 1 — true for both
+  // half-integer lines (2.5 -> X >= 3) and integer lines (3 -> X >= 4,
+  // excluding the push value), matching modeling/distributions.prob_over_discrete.
+  const boundaryK = Math.floor(distribution.line_value) + 1;
+  const maxProb = Math.max(...pmf.map((p) => p.prob));
+  const labelStep = pmfLabelStep(pmf.length);
+  const width = pmf.length * BAR_UNIT;
+  const height = PAD * 2 + CHART_HEIGHT + K_LABEL_HEIGHT;
+  const boundaryX = boundaryK * BAR_UNIT;
+
+  const ariaLabel =
+    `Predicted distribution for ${statLabel(statType)}: mean ${distribution.predicted_mean.toFixed(2)}, ` +
+    `line ${distribution.line_value}, P(over) ${formatPercent(distribution.prob_over)}, ` +
+    `P(under) ${formatPercent(distribution.prob_under)}`;
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className={styles.pmfSvg}
+      role="img"
+      aria-label={ariaLabel}
+      preserveAspectRatio="xMinYMid meet"
+    >
+      {pmf.map(({ k, prob }) => {
+        const barHeight = maxProb > 0 ? (prob / maxProb) * CHART_HEIGHT : 0;
+        const isOverBar = k >= boundaryK;
+        const isWinningSide = (side === "over") === isOverBar;
+        const x = k * BAR_UNIT + BAR_GAP / 2;
+        const barWidth = BAR_UNIT - BAR_GAP;
+        const y = PAD + (CHART_HEIGHT - barHeight);
+        const showLabel = k % labelStep === 0 || k === pmf.length - 1;
+        return (
+          <g key={k}>
+            <rect
+              x={x}
+              y={y}
+              width={barWidth}
+              height={Math.max(barHeight, prob > 0 ? 1 : 0)}
+              className={isWinningSide ? styles.barWinning : styles.barMuted}
+            />
+            {showLabel && (
+              <text
+                x={x + barWidth / 2}
+                y={PAD + CHART_HEIGHT + 12}
+                textAnchor="middle"
+                fontSize={K_LABEL_FONT}
+                className={styles.pmfKLabel}
+              >
+                {k}
+              </text>
+            )}
+          </g>
+        );
+      })}
+      <line
+        x1={boundaryX}
+        y1={PAD}
+        x2={boundaryX}
+        y2={PAD + CHART_HEIGHT}
+        className={styles.lineMarker}
+      />
+    </svg>
+  );
+}
+
+function PmfPanel({ edge }: { edge: EdgeWithDistribution }) {
+  const { distribution } = edge;
+
+  if (!distribution || distribution.family !== "discrete" || !distribution.pmf) {
+    return (
+      <p className={styles.pmfUnavailable}>Distribution shown for MLB (discrete) stats.</p>
+    );
+  }
+
+  return (
+    <div className={styles.pmfPanel}>
+      <div className={styles.pmfChartWrap}>
+        <PmfChart distribution={distribution} side={edge.side} statType={edge.stat_type} />
+      </div>
+      <div className={styles.pmfMeta}>
+        <span>
+          Line <span className={styles.pmfMetaValue}>{distribution.line_value}</span>
+        </span>
+        <span>
+          Mean <span className={styles.pmfMetaValue}>{distribution.predicted_mean.toFixed(2)}</span>
+        </span>
+        <span className={edge.side === "over" ? styles.pmfProbWinning : undefined}>
+          P(over) {formatPercent(distribution.prob_over)}
+        </span>
+        <span className={edge.side === "under" ? styles.pmfProbWinning : undefined}>
+          P(under) {formatPercent(distribution.prob_under)}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function sortAriaFor(sortKey: SortKey, sortDirection: SortDirection, key: SortKey): "ascending" | "descending" | "none" {
@@ -48,11 +177,12 @@ function SortHeader({
   );
 }
 
-export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
+export default function EdgesExplorer({ edges }: { edges: EdgeWithDistribution[] }) {
   const [statFilter, setStatFilter] = useState<Set<string>>(new Set());
   const [sideFilter, setSideFilter] = useState<Set<"over" | "under">>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>("edge");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   const statTypes = useMemo(
     () => [...new Set(edges.map((e) => e.stat_type))].sort(),
@@ -111,6 +241,10 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
   function clearFilters() {
     setStatFilter(new Set());
     setSideFilter(new Set());
+  }
+
+  function toggleExpand(key: string) {
+    setExpandedKey((prev) => (prev === key ? null : key));
   }
 
   const hasActiveFilters = statFilter.size > 0 || sideFilter.size > 0;
@@ -181,6 +315,9 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
             <thead>
               <tr>
                 <th className={styles.th} scope="col">
+                  <span className={styles.srOnly}>Expand distribution</span>
+                </th>
+                <th className={styles.th} scope="col">
                   Player
                 </th>
                 <th className={styles.th} scope="col">
@@ -225,35 +362,67 @@ export default function EdgesExplorer({ edges }: { edges: Edge[] }) {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((e) => (
-                <tr
-                  key={`${e.player_id}-${e.game_id}-${e.stat_type}-${e.side}`}
-                  className={styles.row}
-                >
-                  <td className={styles.td}>
-                    <div className={styles.playerCell}>
-                      <Link
-                        href={`/players/${e.player_id}`}
-                        className={styles.playerLink}
-                        title={e.player_name}
-                      >
-                        {e.player_name}
-                      </Link>
-                    </div>
-                  </td>
-                  <td className={`${styles.td} ${styles.statCell}`}>{statLabel(e.stat_type)}</td>
-                  <td className={`${styles.td} ${styles.edgeValue}`}>{formatPercent(e.edge)}</td>
-                  <td className={styles.td}>
-                    <span className={styles.sideTag}>{e.side}</span>
-                  </td>
-                  {showDateColumn && (
-                    <td className={`${styles.td} ${styles.dataMuted}`}>{e.date}</td>
-                  )}
-                  <td className={`${styles.td} ${styles.data}`}>{e.line_value}</td>
-                  <td className={`${styles.td} ${styles.data}`}>{formatOdds(e.odds)}</td>
-                  <td className={`${styles.td} ${styles.data}`}>{formatPercent(e.model_prob)}</td>
-                </tr>
-              ))}
+              {sorted.map((e) => {
+                const rowKey = `${e.player_id}-${e.game_id}-${e.stat_type}-${e.side}`;
+                const isExpanded = expandedKey === rowKey;
+                const panelId = `pmf-panel-${rowKey}`;
+                const colCount = showDateColumn ? 9 : 8;
+                return (
+                  <Fragment key={rowKey}>
+                    <tr className={styles.row}>
+                      <td className={styles.td}>
+                        <button
+                          type="button"
+                          className={styles.expandButton}
+                          aria-expanded={isExpanded}
+                          aria-controls={panelId}
+                          onClick={() => toggleExpand(rowKey)}
+                        >
+                          <span
+                            className={`${styles.expandIcon} ${isExpanded ? styles.expandIconOpen : ""}`}
+                            aria-hidden="true"
+                          >
+                            ▸
+                          </span>
+                          <span className={styles.srOnly}>
+                            {isExpanded ? "Collapse" : "Expand"} distribution for {e.player_name}{" "}
+                            {statLabel(e.stat_type)}
+                          </span>
+                        </button>
+                      </td>
+                      <td className={styles.td}>
+                        <div className={styles.playerCell}>
+                          <Link
+                            href={`/players/${e.player_id}`}
+                            className={styles.playerLink}
+                            title={e.player_name}
+                          >
+                            {e.player_name}
+                          </Link>
+                        </div>
+                      </td>
+                      <td className={`${styles.td} ${styles.statCell}`}>{statLabel(e.stat_type)}</td>
+                      <td className={`${styles.td} ${styles.edgeValue}`}>{formatPercent(e.edge)}</td>
+                      <td className={styles.td}>
+                        <span className={styles.sideTag}>{e.side}</span>
+                      </td>
+                      {showDateColumn && (
+                        <td className={`${styles.td} ${styles.dataMuted}`}>{e.date}</td>
+                      )}
+                      <td className={`${styles.td} ${styles.data}`}>{e.line_value}</td>
+                      <td className={`${styles.td} ${styles.data}`}>{formatOdds(e.odds)}</td>
+                      <td className={`${styles.td} ${styles.data}`}>{formatPercent(e.model_prob)}</td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className={styles.expandRow}>
+                        <td className={styles.expandCell} colSpan={colCount} id={panelId}>
+                          <PmfPanel edge={e} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

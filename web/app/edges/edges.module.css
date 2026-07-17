@@ -321,6 +321,120 @@
   color: var(--signal-green);
 }
 
+/* Row expansion / PMF distribution chart */
+
+.expandButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.75rem; /* label size (DESIGN.md ramp) — the caret glyph, sr-only text carries the real label */
+  border-radius: 4px;
+}
+
+.expandButton:hover {
+  color: var(--ink);
+}
+
+.expandButton:focus-visible {
+  outline: 1px solid var(--signal-green);
+  outline-offset: 2px;
+}
+
+.expandIcon {
+  display: inline-block;
+  transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.expandIconOpen {
+  transform: rotate(90deg);
+}
+
+.expandRow {
+  background: var(--surface);
+}
+
+.expandCell {
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.pmfPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pmfChartWrap {
+  width: 100%;
+  max-width: 460px;
+}
+
+.pmfSvg {
+  width: 100%;
+  max-height: 180px;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.barMuted {
+  fill: var(--border);
+}
+
+.barWinning {
+  fill: var(--signal-green);
+}
+
+.lineMarker {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.pmfKLabel {
+  /* Axis tick label inside the PMF chart's SVG viewBox. Its size is an SVG
+     presentation attribute (font-size on the <text> element, in viewBox
+     user-units scaled by the viewBox->viewport transform), NOT a CSS rem on
+     the UI type ramp — the same way a chart library styles axis ticks. Only
+     the font family and fill live here. */
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  fill: var(--muted);
+}
+
+.pmfMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.pmfMetaValue {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.pmfProbWinning {
+  color: var(--signal-green);
+  font-weight: 600;
+}
+
+.pmfUnavailable {
+  color: var(--muted);
+  font-size: 0.75rem; /* label size (DESIGN.md ramp) */
+  margin: 0;
+}
+
 /* States */
 
 .emptyState,
