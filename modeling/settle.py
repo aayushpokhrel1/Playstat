@@ -106,7 +106,7 @@ def settle_parlays(engine):
                 """
                 SELECT pr.parlay_id, pr.created_at, pr.legs
                 FROM parlay_recommendations pr
-                WHERE NOT EXISTS (
+                WHERE pr.kind = 'player' AND NOT EXISTS (
                     SELECT 1 FROM recommendation_outcomes ro
                     WHERE ro.bet_type = 'parlay' AND ro.parlay_id = pr.parlay_id
                 )
@@ -215,6 +215,106 @@ def settle_parlays(engine):
 
     print(f"settle: settled {rows_inserted} new parlays ({len(parlays) - rows_inserted} not yet ready)")
     return rows_inserted
+
+
+MARKET_TO_STAT = {"first_inning_runs": "runs_inning_1", "f5_runs": "runs_f5"}
+
+
+def team_leg_actual(totals, game_id, market):
+    """Game total for a team market: totals maps (game_id, market) -> summed runs."""
+    return totals.get((game_id, market))
+
+
+def settle_team_parlays(engine):
+    with engine.begin() as conn:
+        candidates = conn.execute(
+            text(
+                """
+                SELECT pr.parlay_id, pr.created_at, pr.legs
+                FROM parlay_recommendations pr
+                WHERE pr.kind = 'team' AND NOT EXISTS (
+                    SELECT 1 FROM recommendation_outcomes ro
+                    WHERE ro.bet_type = 'parlay' AND ro.parlay_id = pr.parlay_id)
+                """
+            )
+        ).fetchall()
+        if not candidates:
+            print("settle: no new team parlays to evaluate.")
+            return 0
+
+        parsed = [(pid, ca, _as_legs_list(raw)) for pid, ca, raw in candidates]
+        # team legs live under a {"class","ev","legs":[...]} wrapper
+        parsed = [(pid, ca, blob["legs"] if isinstance(blob, dict) else blob) for pid, ca, blob in parsed]
+        game_ids = sorted({int(l["game_id"]) for _, _, legs in parsed for l in legs})
+
+        games = pd.read_sql(text("SELECT game_id, status FROM games WHERE game_id = ANY(:g)"),
+                            conn, params={"g": game_ids})
+        team_totals = pd.read_sql(
+            text(
+                """
+                SELECT game_id, stat_type, SUM(value) AS total
+                FROM team_game_stats
+                WHERE game_id = ANY(:g) AND stat_type IN ('runs_inning_1','runs_f5')
+                GROUP BY game_id, stat_type
+                """
+            ),
+            conn, params={"g": game_ids})
+        lines = pd.read_sql(
+            text(
+                """
+                SELECT game_id, market, line_value, pulled_at
+                FROM game_lines WHERE game_id = ANY(:g) ORDER BY pulled_at
+                """
+            ),
+            conn, params={"g": game_ids})
+
+    status = dict(zip(games["game_id"], games["status"]))
+    totals = {(int(r.game_id), {"runs_inning_1": "first_inning_runs", "runs_f5": "f5_runs"}[r.stat_type]):
+              float(r.total) for r in team_totals.itertuples()}
+    lines_grp = lines.groupby(["game_id", "market"])
+
+    inserted = 0
+    with engine.begin() as conn:
+        for parlay_id, created_at, legs in parsed:
+            results, odds_list, audit, ready = [], [], [], True
+            for leg in legs:
+                gid, market, side, odds = int(leg["game_id"]), leg["market"], leg["side"], leg["odds"]
+                if status.get(gid) != "FT":
+                    ready = False; break
+                actual = team_leg_actual(totals, gid, market)
+                if actual is None:
+                    ready = False; break
+                try:
+                    snaps = lines_grp.get_group((gid, market))
+                except KeyError:
+                    ready = False; break
+                rec_snap = _rec_snapshot(snaps, created_at)
+                line_value = rec_snap["line_value"]
+                if line_value is None or pd.isna(line_value):
+                    ready = False; break
+                res = settle_leg(side, float(actual), float(line_value))
+                results.append(res)
+                odds_list.append(american_to_decimal(odds))
+                audit.append({"game_id": gid, "market": market, "side": side,
+                              "line": float(line_value), "odds": int(odds),
+                              "actual": float(actual), "result": res})
+            if not ready:
+                continue
+            result, decimal_odds, pnl = parlay_result(results, odds_list)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO recommendation_outcomes
+                        (bet_type, parlay_id, result, n_legs, stake, decimal_odds, pnl, legs, recommended_at)
+                    VALUES ('parlay', :pid, :res, :n, 1, :co, :pnl, CAST(:legs AS JSONB), :ra)
+                    """
+                ),
+                {"pid": int(parlay_id), "res": result, "n": len(legs),
+                 "co": float(decimal_odds), "pnl": float(pnl),
+                 "legs": json.dumps(audit), "ra": created_at})
+            inserted += 1
+    print(f"settle: settled {inserted} new team parlays ({len(parsed) - inserted} not yet ready)")
+    return inserted
 
 
 def settle_edges(engine, min_edge=DEFAULT_MIN_EDGE):
@@ -351,6 +451,7 @@ def print_summary(engine):
 
 def settle(engine):
     settle_parlays(engine)
+    settle_team_parlays(engine)
     settle_edges(engine)
     print_summary(engine)
 
