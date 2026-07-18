@@ -14,6 +14,11 @@ DEFAULT_TOP_N = 10
 # After de-vigging, one side of every line has edge >= 0 by construction, so a
 # bare "edge > 0" filter admits every line in the book. Demand a real margin.
 DEFAULT_MIN_EDGE = 0.03
+# Cap on candidate legs fed into the O(n^3) combination search. A full resumed
+# slate admitted ~1,060 legs (C(1060,3) ~ 198M combos) and the search was
+# OOM-killed (SIGKILL) on 2026-07-18 under a full disk. Bounds the search to
+# C(200,3) ~ 1.3M.
+MAX_CANDIDATE_LEGS = 200
 
 
 def american_to_decimal(odds):
@@ -127,6 +132,12 @@ def main():
     if not legs:
         print("No candidate legs — nothing to search (expected until prop_lines/edges have real data).")
         return
+
+    # Bound the O(n^3) combination search: keep the highest model-probability legs,
+    # which are the ones a near-target, low-risk parlay is built from anyway.
+    if len(legs) > MAX_CANDIDATE_LEGS:
+        legs = sorted(legs, key=lambda leg: leg["model_prob"], reverse=True)[:MAX_CANDIDATE_LEGS]
+        print(f"capped to top {MAX_CANDIDATE_LEGS} legs by model probability (combinatorial/OOM safety)")
 
     matches = find_combinations(legs, args.target_payout, args.min_legs, args.max_legs, args.tolerance)
     print(f"combinations near target payout ({args.target_payout}x, tolerance {args.tolerance:.0%}): {len(matches)}")
