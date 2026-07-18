@@ -198,6 +198,14 @@ def _upsert_player_rows(conn, game, boxscore):
     return stat_rows
 
 
+def f5_runs(innings, side):
+    """Sum a side's runs over innings 1-5 (fewer if the game was short). None if
+    no innings at all — mirrors runs_inning_1/runs, which are also None pre-game."""
+    if not innings:
+        return None
+    return sum((inn.get(side) or {}).get("runs") or 0 for inn in innings[:5])
+
+
 def backfill_team_stats(client, engine, season):
     """Per-team, per-game stats — first-inning runs and full-game runs from
     linescores (final games), plus each side's starting pitcher from the
@@ -228,6 +236,7 @@ def backfill_team_stats(client, engine, season):
                     first = innings[0].get(side) or {}
                     stats["runs_inning_1"] = first.get("runs")
                     stats["runs"] = sum((inn.get(side) or {}).get("runs") or 0 for inn in innings)
+                    stats["runs_f5"] = f5_runs(innings, side)
                 pitcher = game["teams"][side].get("probablePitcher")
                 if pitcher and pitcher.get("id"):
                     stats["starter_player_id"] = pitcher["id"] + MLB_ID_OFFSET
