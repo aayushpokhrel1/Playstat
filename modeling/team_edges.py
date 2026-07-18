@@ -10,6 +10,13 @@ from sqlalchemy import text
 
 from ingestion import db
 from modeling.edges import devig
+from modeling.f5 import MODEL_VERSION as F5_VERSION
+from modeling.first_inning import MODEL_VERSION as FI_VERSION
+
+# The current model version per game market. game_predictions accumulates old
+# versions (e.g. xgb_poisson_fi_v1) across model bumps; without this pin the merge
+# would non-deterministically mix versions for the same (game_id, market).
+CURRENT_VERSIONS = {"first_inning_runs": FI_VERSION, "f5_runs": F5_VERSION}
 
 
 def best_side(model_p_over, model_p_under, implied_over, implied_under):
@@ -43,7 +50,8 @@ def compute_team_edges(engine):
         preds = pd.read_sql(
             text(
                 """
-                SELECT game_id, market, prob_over, prob_under
+                SELECT game_id, market, model_version,
+                       line_value AS model_line, prob_over, prob_under
                 FROM game_predictions
                 WHERE prob_over IS NOT NULL AND prob_under IS NOT NULL
                 """
@@ -51,13 +59,27 @@ def compute_team_edges(engine):
             conn,
         )
 
+    # Keep only the current model version per market (drops stale predictions).
+    preds = preds[preds.apply(
+        lambda p: CURRENT_VERSIONS.get(p["market"]) == p["model_version"], axis=1
+    )]
+
     merged = lines.merge(preds, on=["game_id", "market"], how="inner")
-    rows, skipped = 0, 0
+    rows, skipped, line_mismatch = 0, 0, 0
     fresh = []
     with engine.begin() as conn:
         for r in merged.to_dict("records"):
             if pd.isna(r["over_odds"]) or pd.isna(r["under_odds"]):
                 skipped += 1
+                continue
+            # The model's probability is only comparable to the book's odds when
+            # both refer to the SAME line. The first-inning model predicts at 1.5
+            # (P<=1 run) while books quote NRFI at 0.5 (P=0 runs) — comparing those
+            # manufactures huge fake edges. Require the lines to match; F5 derives
+            # its prob at the book line so it matches, NRFI-at-0.5 is skipped until
+            # the first-inning model predicts at the book's line.
+            if pd.isna(r["model_line"]) or abs(float(r["model_line"]) - float(r["line_value"])) > 1e-6:
+                line_mismatch += 1
                 continue
             implied_over, implied_under = devig(r["over_odds"], r["under_odds"])
             side, mp, ip, edge = best_side(
@@ -88,6 +110,7 @@ def compute_team_edges(engine):
 
     print(f"team_edges: upserted {rows} rows"
           + (f" (skipped {skipped} one-sided)" if skipped else "")
+          + (f" (skipped {line_mismatch} model/market line mismatch)" if line_mismatch else "")
           + (f" (pruned {stale} stale)" if stale else ""))
 
 
