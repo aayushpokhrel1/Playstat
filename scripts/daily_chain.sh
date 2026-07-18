@@ -67,6 +67,14 @@ notify_failure() {
 
 echo "=== chain start $(date '+%F %H:%M:%S') ==="
 
+# Keep the Mac awake for the chain's duration. macOS idle/maintenance sleep was
+# suspending the ~1hr morning retrain mid-run (2026-07-18: ~43 min lost to
+# maintenance sleep, stretching a 1h job past 2h). caffeinate holds an
+# idle+disk-sleep assertion tied to THIS script's PID ($$) and releases the
+# moment the script exits — scoped to the run, no sudo, no persistent setting.
+# The `-w $$` backgrounded process is reaped when the script ends.
+command -v caffeinate >/dev/null && caffeinate -i -m -w $$ 2>/dev/null &
+
 run_chain() {
 	if [ -n "${PLAYSTAT_CHAIN_CMD:-}" ]; then
 		# Smoke-test hook: stand in for the real pipeline.
