@@ -42,9 +42,15 @@ STAT_MAPS = {
 # Game-level (not player) markets to ingest into game_lines, per sport:
 # market name -> (statID, statEntityID, periodID). MLB "1st Inning Over/Under"
 # is statID points / entity all / period 1i in the SGO feed (verified live).
+# F5 ("first 5 innings" total runs) is period 1ix5 — SGO's "innings 1 through 5"
+# cumulative family (1ix3/1ix5/1ix7); verified live 2026-07-17 as fully priced on
+# our free tier (line ~3.5, over/under quoted across fanduel/bovada/betmgm/draftkings).
+# Unlike NRFI's fixed 0.5 line, F5 lines vary per game — the model derives P(under
+# actual_line) from a predicted mean rather than a single fixed threshold.
 GAME_MARKETS = {
     "mlb": {
         "first_inning_runs": ("points", "all", "1i"),
+        "f5_runs": ("points", "all", "1ix5"),
     },
 }
 

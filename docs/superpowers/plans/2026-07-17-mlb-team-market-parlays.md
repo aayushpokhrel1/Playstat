@@ -389,9 +389,19 @@ Copy `modeling/first_inning.py` to `modeling/f5.py` and change exactly these thi
 - Constants block:
   ```python
   MARKET = "f5_runs"
-  LINE = 4.5          # books' typical F5 total; predicted_mean lets any line be priced
+  LINE = 4.5          # representative training threshold only — see the variable-line note below
   MODEL_VERSION = "xgb_f5_v1"
   ```
+  **Variable-line note (from the Phase 0 probe):** F5 lines vary per game (the probe saw 3.5, not
+  a fixed value like NRFI's 0.5). So a single fixed-threshold classifier can't price every game's
+  actual line. **Implementer decision (opus judgment):** predict a mean (Poisson/`count:poisson`
+  regressor) AND derive `prob_under`/`prob_over` at each *upcoming game's own* `game_lines`
+  `line_value` via `prob_under_line_poisson(mean, actual_line)`, rather than the NRFI-style
+  fixed-line classifier. Keep the classifier only as a holdout calibration check at the fixed
+  `LINE` (report its Brier vs base rate as NRFI does). If no F5 `game_lines` row exists yet for an
+  upcoming game, fall back to deriving at `LINE`. This means Task 4 reads `game_lines` for the F5
+  line per game in the upcoming-prediction loop — a small addition to the `first_inning.py`
+  pattern, which uses a constant line.
 - In `_load_game_frame`, change the joined stat from `runs_inning_1` to `runs_f5`, and rename the selected columns `home_fi`/`away_fi` → `home_f5`/`away_f5` throughout the module (feature names `*_scored_fi`/`*_allowed_fi` may stay — they are just labels — but rename to `*_f5` for clarity).
 - Replace `prob_under_2` with a line-parameterized Poisson helper (F5's line isn't 1.5):
   ```python

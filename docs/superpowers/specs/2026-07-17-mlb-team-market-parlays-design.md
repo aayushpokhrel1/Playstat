@@ -53,14 +53,14 @@ props** until the player models earn real resolution.
   from the same already-fetched response. Backfill = add one field + re-run `--only
   linescores` (one hydrated request per season). This also supplies the correlation-table
   history.
-- **F5 lines — one live unknown (implementation gate 0).** `collect_game_rows` reads a generic
-  `GAME_MARKETS[sport]` map of `market → (statID, entityID, periodID)`; NRFI is
-  `("points","all","1i")`. A single-event SGO probe must find the F5 period ID before wiring.
-  Contingencies:
-  - Quoted on our free tier → add `("points","all",<f5period>)` to `GAME_MARKETS["mlb"]`.
-  - Paid-tier only → F5 is still *modeled and settled* (we own outcomes) but not *priced/
-    EV-tagged*; the F5 leg degrades to model-only. Escalate the paid-plan decision to the user.
-  - Not quoted → F5 leg is model-only; revisit the market with the user.
+- **F5 lines — RESOLVED (probed live 2026-07-17).** F5 is period **`1ix5`** in SGO (the "innings
+  1 through 5" cumulative family: `1ix3`/`1ix5`/`1ix7`), statID `points`, entity `all`. **Fully
+  priced on our free tier** — a probe of one MLB event returned line 3.5, over +110 / under −146,
+  with a `byBookmaker` breakdown across fanduel/bovada/betmgm/draftkings. `GAME_MARKETS["mlb"]`
+  now carries `"f5_runs": ("points","all","1ix5")`. So F5 is fully priced and EV-taggable; the
+  paid-tier and model-only contingencies did not trigger. **One design consequence:** unlike
+  NRFI's fixed 0.5 line, F5 lines vary per game, so the F5 model predicts a mean and derives
+  P(under actual_line) per game rather than training a single fixed-threshold classifier.
 
 ## Architecture
 
