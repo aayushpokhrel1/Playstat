@@ -29,10 +29,10 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from scipy.stats import poisson
 from sqlalchemy import text
 
 from ingestion import db
+from modeling.distributions import prob_over_discrete
 
 MARKET = "f5_runs"
 LINE = 4.5          # representative training threshold only — see the variable-line note above
@@ -49,16 +49,19 @@ FEATURE_COLS = (
 )
 
 
-def prob_under_line_poisson(mean, line):
-    """P(total < line) for total ~ Poisson(mean).
+def prob_under_line_nb(mean, dispersion_r, line):
+    """P(total < line) for an NB2 count law reconstructed from (mean, dispersion_r).
 
-    The traded F5 line is variable and often a half-integer, so parameterize by
-    it: P(X < line) = P(X <= ceil(line) - 1). Used to convert the Poisson-mean
-    regressor's prediction into the under probability at each game's own line.
+    F5 totals are overdispersed (holdout Var/Mean ~2.16): a plain Poisson
+    understates the under-tail by ~5 points and would manufacture fake edges.
+    We give the mean a matching NB2 variance via std = sqrt(mean + mean^2/r) and
+    reuse the shared discrete reconstruction in modeling/distributions.py (the
+    same NB2/Poisson math the player-prop edges use), which also handles the
+    half-integer F5 line exactly. As r -> inf the NB2 collapses to Poisson.
     """
     mean = max(float(mean), 1e-6)
-    k = math.ceil(line) - 1          # P(X < line) = P(X <= ceil(line)-1)
-    return float(poisson.cdf(k, mean))
+    std = math.sqrt(mean + mean * mean / dispersion_r)
+    return 1.0 - prob_over_discrete(mean, std, line)
 
 
 def _load_game_frame(conn, sport="mlb"):
@@ -259,7 +262,7 @@ def main():
         reg.fit(frame[FEATURE_COLS], frame["total_f5"])
         return clf, reg
 
-    clf, _ = fit_models(train_df)
+    clf, reg_tr = fit_models(train_df)
     p_under = clf.predict_proba(test_df[FEATURE_COLS])[:, 1]
     outcome_under = test_df["under"].to_numpy().astype(float)
     brier = float(np.mean((p_under - outcome_under) ** 2))
@@ -267,6 +270,18 @@ def main():
     print(f"holdout n={len(test_df)}: empirical under rate {outcome_under.mean():.1%}, "
           f"mean predicted P(under) {p_under.mean():.1%}, Brier {brier:.4f} "
           f"(always-predict-base-rate Brier: {base_brier:.4f})")
+
+    # Global NB2 dispersion for the traded prob_under. F5 totals are overdispersed
+    # (a plain Poisson understated the under-tail by ~5 points on holdout), so fit
+    # r by method of moments on the TRAIN residuals (out-of-mean-model, leakage-safe
+    # via the train-only reg above): E[((Y-mu)^2 - mu)/mu^2] = 1/r. Larger r = closer
+    # to Poisson. Carried into the prediction loop as std = sqrt(mu + mu^2/r).
+    mu_tr = np.clip(reg_tr.predict(train_df[FEATURE_COLS]), 0.1, None)
+    y_tr = train_df["total_f5"].to_numpy()
+    inv_r = float(np.mean(((y_tr - mu_tr) ** 2 - mu_tr) / mu_tr ** 2))
+    dispersion_r = 1.0 / max(inv_r, 1e-6)
+    print(f"F5 NB2 dispersion: r={dispersion_r:.2f} "
+          f"(train Var/Mean={y_tr.var() / y_tr.mean():.2f})")
 
     # Refit on everything, predict upcoming games.
     clf, reg = fit_models(played)
@@ -284,7 +299,7 @@ def main():
             # Traded prob is derived at THIS game's own F5 book line; fall back to
             # the constant LINE when no game_lines row exists yet.
             line = f5_lines.get(game_id, LINE)
-            pu = prob_under_line_poisson(float(lam), line)
+            pu = prob_under_line_nb(float(lam), dispersion_r, line)
             db.upsert(
                 conn,
                 "game_predictions",
