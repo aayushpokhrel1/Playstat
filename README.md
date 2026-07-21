@@ -391,7 +391,9 @@ No `ev` field. Must **not** modify `/edges`, `/parlay-recommendations`, `/game-p
 
 ### 15.7 Daily chain + paper tracking
 
-In [`scripts/daily_chain.sh`](scripts/daily_chain.sh), replace the `optimizer.parlay` step with `python -m optimizer.builder` at the two default targets (~1.4x, ~2.0x), capped. `modeling.settle` already runs later in the chain and scores the new `parlay_recommendations` rows with **no new settlement code**; the existing dashboard "Betting record (paper)" section then shows the builder's real W-L-P / ROI.
+In [`scripts/daily_chain.sh`](scripts/daily_chain.sh), replace the `optimizer.parlay` step with `python -m optimizer.builder` at the two default targets (~1.4x, ~2.0x), capped. `modeling.settle` already runs later in the chain, and the existing dashboard "Betting record (paper)" section then shows the builder's real W-L-P / ROI.
+
+> **Correction (2026-07-21):** an earlier draft of this section claimed settlement needed **no new code**. That is **wrong**. Both existing paths are *homogeneous*: `settle_parlays` (`kind='player'`) requires `player_id` on every leg and reads `player_game_stats`/`prop_lines`, while `settle_team_parlays` (`kind='team'`) requires `market` on every leg and reads `team_game_stats`/`game_lines`. The builder's whole premise is **mixing player and team legs in one parlay**, which crashes both. Stage 1 therefore adds `settle_builder_parlays()` (`kind='builder'`), dispatching **per leg** on `leg["kind"]`. The pure scoring functions (`settle_leg`, `parlay_result`, `_rec_snapshot`, `american_to_decimal`) are all reused, so it is contained — but it is real work, not free.
 
 This **retires the step that OOM-died (SIGKILL) nightly** and pushed a false failure alert every morning (§11 chain caveat) — the cap plus the 0.55 floor is the fix, and the runaway step goes away rather than being patched.
 
