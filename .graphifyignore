@@ -1,0 +1,27 @@
+# Subagent worktrees are full copies of this repo (git worktree add). Left in
+# the scan corpus, every source file exists 7+ times, graphify's near-duplicate
+# detection collapses them, and a worktree copy can win — evicting the real file
+# and shrinking the corpus to almost nothing. That is what silently broke
+# `graphify update` here (diagnosed 2026-07-21): rebuilds produced 59 nodes
+# against an existing 793-node graph, and the fail-closed guard refused to write.
+.claude/worktrees/
+
+# Scratch/vendor trees that are not this project's source.
+web/node_modules/
+web/.next/
+
+# pytest writes .pytest_cache/.gitignore containing a bare "*". graphify
+# accumulates every walked directory ignore file into ONE global pattern list,
+# so that "*" leaked out and ignored the entire repo — detect() returned 0 files
+# and every `graphify update` rebuilt a 59-node graph that the fail-closed guard
+# (correctly) refused to write over the real 793-node one. Diagnosed 2026-07-21.
+.pytest_cache/
+
+# Same bare "*" leak as .pytest_cache (see above).
+.superpowers/sdd/
+
+# Same bare "*" pattern — added preemptively, these tools all write one.
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.tox/

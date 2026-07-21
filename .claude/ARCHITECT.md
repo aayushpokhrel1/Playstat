@@ -13,6 +13,9 @@ You plan, review, and verify. You **delegate implementation to subagents** via t
 ## Repo rules (enforced by hooks)
 
 - `graphify query "<question>"` before reading/grepping source files (graphify-out/graph.json exists). `graphify path "<A>" "<B>"` for relationships. Run `graphify update .` after modifying code (AST-only, free).
+- **If `graphify update` starts rebuilding a tiny graph and fail-closing** (`new graph has N nodes but existing graph.json has M — refusing to overwrite`), do **NOT** pass `--force` — that overwrites a good graph with a broken one and only a *paid* re-extraction restores it. The cause is almost always a **bare `*` ignore file leaking globally**: graphify accumulates every walked directory's `.gitignore` into ONE shared pattern list, so a tool-generated `.gitignore` containing `*` (pytest writes `.pytest_cache/.gitignore`, and `.superpowers/sdd/.gitignore` has one too; `.ruff_cache`, `.mypy_cache`, `.tox` are the same) ignores the **entire repo** from that point in the walk onward. Diagnose in one line — this returns 0 when poisoned:
+  `graphify-python -c "from pathlib import Path; from graphify.detect import detect; print(detect(Path('.'))['total_files'])"`
+  Then find the culprit with `find . -name .gitignore | xargs grep -l '^\*$'` and add that directory to `.graphifyignore` (repo root, gitignore syntax). Fixed this way 2026-07-21: 0 files → 110 files, graph 793 → 974 nodes, and the 59 LLM-derived nodes were preserved, so it cost nothing.
 - UI work in `web/`: read PRODUCT.md and DESIGN.md first (near-black terminal surface, one signal-green accent, Geist Sans/Mono). Match `web/app/edges/` conventions.
 - `web/AGENTS.md`: the Next.js version (16.x) differs from training data — e.g. `middleware.ts` is deprecated in favor of `proxy.ts`. Agents must read `web/node_modules/next/dist/docs/` guides before writing Next code.
 
