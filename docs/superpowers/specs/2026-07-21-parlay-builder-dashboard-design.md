@@ -50,7 +50,7 @@ present partial results as complete. README §15.10 records truncation as a
 | 4 | Paper record | **Compact record strip on the page**, `parlay_builder` only. |
 | 5 | Signal color | **Green means "safe", not "edge"** — joint probability turns Signal Green at or above 75%, Ink below. Requires a one-line DESIGN.md amendment. |
 | 6 | Route | **`/builder`**, titled "Parlay Builder". |
-| 7 | Saved-row source | **A new builder-scoped read** returning the same shape as the live search. `/parlay-recommendations` stays out of the dashboard's path entirely. |
+| 7 | Saved-row source | **A new builder-scoped read** (`/parlay-builder/saved`) of the precomputed nightly rows, returning a superset of the live-search shape. Now also a **finalized Budgerr-facing contract** (see §6.2). `/parlay-recommendations` stays out of the dashboard's path entirely. |
 
 ## 4. Prerequisite — landing separately, before this work
 
@@ -126,16 +126,46 @@ list has nowhere to put it. This endpoint is new in Stage 1 and the dashboard is
 its only consumer, so the shape change is free now and gets strictly more
 expensive with every consumer added. `BuilderParlayOut` itself is unchanged.
 
-**6.2 `GET /parlay-builder/saved?limit=` — a builder-scoped read** for the saved
-nightly constructions, returning the same `BuilderParlayOut` shape so
-`ConstructionList` renders it without a branch.
-It reads `parlay_recommendations` where `kind='builder'`, most recent first,
-unwrapping the `{"class": "across_game", "legs": [...]}` JSONB wrapper. It must
-also return each row's `target_payout` so the page can label which nightly target
-a construction came from (1.4x or 2.0x).
+**6.2 `GET /parlay-builder/saved?limit=` — a builder-scoped read of the
+precomputed nightly constructions.** It reads `parlay_recommendations` where
+`kind='builder'`, most recent first, unwrapping the
+`{"class": "across_game", "legs": [...]}` JSONB wrapper.
+
+It returns a superset of `BuilderParlayOut` — the same `legs`, `combined_odds`,
+`joint_prob`, `n_legs` core so `ConstructionList` renders saved and searched
+results with one component, plus three saved-only fields the dashboard ignores
+but an external consumer needs: `parlay_id` (identity), `created_at` (slate
+freshness), and `target_payout` (which nightly target — 1.4x or 2.0x — produced
+it). Define `SavedBuilderParlayOut(BuilderParlayOut)` adding those three; do not
+mutate `BuilderParlayOut` itself.
+
+**This endpoint is a finalized external contract (user-confirmed 2026-07-21),
+Budgerr-facing, additive-only** — the same discipline as the §7.1 surfaces. The
+Budgerr session independently measured the live `/parlay-builder` search at
+~8–13s through its 10s proxy (502s on timeout), corroborating §2, and asked for
+a precomputed listable "low-risk parlay of the day" rather than a live call.
+This endpoint is exactly that: a fast list read (~0.3s, like
+`/parlay-recommendations`), off Budgerr's critical path. Consequences for the
+build:
+
+- **Field names and shape are now a contract.** Once shipped, changes are
+  additive only. Name the fields as above and do not rename them later.
+- **Team legs carry no team identity in `label`.** NRFI/F5 are game-level
+  markets: a team leg is `kind:"team"`, `player_id:null`, `stat_type:null`,
+  `market ∈ {"first_inning_runs","f5_runs"}`, and `label` is just
+  `"first_inning_runs under 0.5"`. The matchup is resolved via `game_id` →
+  `/games`. This is a known shape, not a gap to fix here, but it must be
+  documented in the endpoint's docstring so the consumer knows to join on
+  `game_id`.
+- A short README note (new subsection under §7.1 or §15) must record that
+  `/parlay-builder/saved` is a Budgerr contract surface, so a future session
+  doesn't treat it as a private dashboard read and break it.
 
 Neither change may touch `/edges`, `/box-scores`, `/games`, `/game-predictions`,
-or `/parlay-recommendations`.
+or `/parlay-recommendations`. Note also that §6.1 changes the *live*
+`/parlay-builder` response from a bare list to an object — Budgerr probed the
+current bare-list shape, so this change must be communicated to that session
+before they build against it.
 
 ## 7. Engine work — raise the node budget
 
