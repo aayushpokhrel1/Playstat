@@ -130,9 +130,18 @@ def save_builds(engine, target_payout, results):
 
 def main():
     parser = argparse.ArgumentParser(description="Low-risk parlay builder (no edge/EV claim).")
-    parser.add_argument("--target-payout", type=float, default=None)
+    parser.add_argument("--target-payout", type=float, default=None,
+                        help="minimum payout to construct — a FLOOR, not a target band. "
+                             "Returns the safest (highest joint-prob) construction that "
+                             "pays AT LEAST this much.")
     parser.add_argument("--min-prob", type=float, default=None)
-    parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
+    parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE,
+                        help="initial search width above --target-payout, as a fraction "
+                             "(e.g. 0.10 = search up to 10%% above the floor first). Only "
+                             "affects search performance, not correctness: if nothing "
+                             "qualifies within it, the search automatically widens "
+                             "(1.5x, 3x, then unbounded) until it finds the cheapest "
+                             "qualifying construction. Ignored when --target-payout is unset.")
     parser.add_argument("--floor", type=float, default=DEFAULT_FLOOR)
     parser.add_argument("--min-legs", type=int, default=DEFAULT_MIN_LEGS)
     parser.add_argument("--max-legs", type=int, default=DEFAULT_MAX_LEGS)
@@ -149,6 +158,11 @@ def main():
     if not legs:
         print("no candidate legs — nothing to build.")
         return
+
+    if args.target_payout is not None:
+        print(f"target payout {args.target_payout:.2f}x is a FLOOR — every construction "
+              f"below will pay AT LEAST that much (search widens automatically if "
+              f"nothing qualifies within --tolerance).")
 
     stats = {}
     results = build(legs, target_payout=args.target_payout, tolerance=args.tolerance,

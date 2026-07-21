@@ -28,6 +28,7 @@ from api.schemas import (
     TeamOut,
 )
 from ingestion.db import get_engine
+from modeling import settle
 from modeling.distributions import pmf_list, prob_over
 from modeling.train import model_version, stat_family
 from optimizer import builder, builder_core
@@ -401,6 +402,24 @@ def game_predictions(date: date_type | None = None, sport: str | None = None):
     ]
 
 
+def _as_legs_list(raw):
+    """Unwrap a parlay_recommendations.legs JSONB value into a plain list of
+    leg dicts. Same defensive shape as modeling.settle._as_legs_list (README
+    §15.10 bug #4): psycopg2 hands JSONB back already parsed, so the
+    team/builder {"class", "legs": [...]} wrapper arrives as a dict, and
+    json.loads(dict) raises TypeError, not a parse error. This endpoint's
+    `kind` filter (below) keeps builder rows out entirely, but the dormant
+    kind='team' path shares this exact wrapper shape and would hit the
+    identical crash the moment it goes live — fixed defensively here too
+    (README §15.10 bug #5).
+    """
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if isinstance(raw, dict):
+        return raw["legs"]
+    return raw
+
+
 @app.get("/parlay-recommendations", response_model=list[ParlayRecommendationOut])
 def list_parlay_recommendations(limit: int = 10):
     with engine.begin() as conn:
@@ -409,6 +428,16 @@ def list_parlay_recommendations(limit: int = 10):
                 """
                 SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
                 FROM parlay_recommendations
+                -- External-contract surface (Budgerr, README §7.1/§15.6) —
+                -- additive-only. This endpoint's response schema (ParlayLeg)
+                -- models only the pre-builder player/team leg shape, and
+                -- builder constructions (kind='builder') mix player+team legs
+                -- in one parlay and have their own endpoint/schema
+                -- (/parlay-builder, BuilderParlayOut). Do NOT remove this
+                -- filter to "let builder rows through here too" — it will
+                -- 500 the moment a builder row enters the LIMIT window
+                -- (README §15.10 bug #5, hit live 2026-07-21).
+                WHERE kind IN ('player', 'team')
                 ORDER BY created_at DESC, joint_prob DESC
                 LIMIT :limit
                 """
@@ -416,11 +445,15 @@ def list_parlay_recommendations(limit: int = 10):
             {"limit": limit},
         ).fetchall()
 
-    parlays = [(r, r[5] if isinstance(r[5], list) else json.loads(r[5])) for r in rows]
+    parlays = [(r, _as_legs_list(r[5])) for r in rows]
 
-    # Legs are stored with player_id only; resolve names in one query so
-    # consumers (Budgerr's Tonight view) can render them directly.
-    player_ids = {leg["player_id"] for _, legs_raw in parlays for leg in legs_raw}
+    # Legs are stored with player_id only for the (live) player kind; resolve
+    # names in one query so consumers (Budgerr's Tonight view) can render
+    # them directly. The dormant team-kind shape carries no player_id at all
+    # — tolerate that rather than raising a KeyError.
+    player_ids = {
+        leg["player_id"] for _, legs_raw in parlays for leg in legs_raw if "player_id" in leg
+    }
     names = {}
     if player_ids:
         with engine.begin() as conn:
@@ -440,7 +473,7 @@ def list_parlay_recommendations(limit: int = 10):
                 target_payout=r[2],
                 joint_prob=r[3],
                 combined_odds=r[4],
-                legs=[ParlayLeg(**leg, player_name=names.get(leg["player_id"])) for leg in legs_raw],
+                legs=[ParlayLeg(**leg, player_name=names.get(leg.get("player_id"))) for leg in legs_raw],
             )
         )
     return results
@@ -460,6 +493,15 @@ def parlay_builder(
 
     Pin target_payout and/or min_prob. joint_prob is the honest probability the
     whole parlay hits. No edge or expected-value claim is made or returned.
+
+    target_payout is a FLOOR, not the centre of a tolerance band: returns the
+    safest (highest joint-prob) construction that pays AT LEAST target_payout.
+    tolerance only sets the initial search width above that floor (as a
+    fraction, e.g. 0.10 = 10% above the floor) — a performance knob, not a
+    correctness one. If nothing qualifies within it the search widens
+    automatically (1.5x, 3x, then unbounded) until it finds the cheapest
+    qualifying construction, so tolerance never changes *which* result is
+    returned, only how quickly it's found.
     """
     if target_payout is None and min_prob is None:
         raise HTTPException(
@@ -522,49 +564,43 @@ def clv_summary():
 @app.get("/bet-performance", response_model=list[BetPerformanceOut])
 def bet_performance():
     """Paper-trading ledger aggregate (README §14.1, modeling/settle.py) — the
-    honest record of whether recommended parlays/edges would have won. One
-    row per bet_type ('parlay', 'edge') plus an 'all' row combining both.
+    honest record of whether recommended parlays/edges would have won.
+
+    Parlay rows are broken out by their source parlay_recommendations.kind so
+    the builder's paper record (README §15) doesn't pool with the legacy
+    model-ranked parlays: 'parlay_model' (kind='player'), 'parlay_team'
+    (kind='team'), 'parlay_builder' (kind='builder'), plus 'edge' and a
+    combined 'all' row. The recommendation_outcomes.bet_type column itself
+    stays 'parlay' for every parlay row — the DB CHECK constraint requires
+    it — the split happens here via a LEFT JOIN onto
+    parlay_recommendations.kind, not in the schema.
     """
     with engine.begin() as conn:
         rows = conn.execute(
             text(
                 """
-                SELECT bet_type,
+                SELECT ro.bet_type, pr.kind,
                        COUNT(*) AS n,
-                       SUM((result = 'win')::int) AS wins,
-                       SUM((result = 'loss')::int) AS losses,
-                       SUM((result = 'push')::int) AS pushes,
-                       SUM(stake) AS total_staked,
-                       SUM(pnl) AS total_pnl
-                FROM recommendation_outcomes
-                GROUP BY bet_type
-                ORDER BY bet_type
+                       SUM((ro.result = 'win')::int) AS wins,
+                       SUM((ro.result = 'loss')::int) AS losses,
+                       SUM((ro.result = 'push')::int) AS pushes,
+                       SUM(ro.stake) AS total_staked,
+                       SUM(ro.pnl) AS total_pnl
+                FROM recommendation_outcomes ro
+                LEFT JOIN parlay_recommendations pr ON pr.parlay_id = ro.parlay_id
+                GROUP BY ro.bet_type, pr.kind
                 """
             )
         ).fetchall()
 
-    def _row(bet_type, n, wins, losses, pushes, staked, pnl):
-        staked, pnl = float(staked or 0), float(pnl or 0)
-        return BetPerformanceOut(
-            bet_type=bet_type, n=n, wins=wins, losses=losses, pushes=pushes,
+    return [
+        BetPerformanceOut(
+            bet_type=label, n=n, wins=wins, losses=losses, pushes=pushes,
             total_staked=staked, total_pnl=pnl,
             roi=(pnl / staked if staked else 0.0),
         )
-
-    results = [_row(*r) for r in rows]
-    if rows:
-        results.append(
-            _row(
-                "all",
-                sum(r[1] for r in rows),
-                sum(r[2] for r in rows),
-                sum(r[3] for r in rows),
-                sum(r[4] for r in rows),
-                sum(float(r[5] or 0) for r in rows),
-                sum(float(r[6] or 0) for r in rows),
-            )
-        )
-    return results
+        for label, n, wins, losses, pushes, staked, pnl in settle.aggregate_bet_performance(rows)
+    ]
 
 
 @app.get("/backtest-history", response_model=list[BacktestRunOut])

@@ -107,6 +107,17 @@ def _rec_snapshot(snaps, created_at):
 
 
 def settle_parlays(engine):
+    # Dedupe note (README §15 Task 2, 2026-07-21): this NOT EXISTS guard checks
+    # bet_type='parlay' only — the same DB value settle_team_parlays() and
+    # settle_builder_parlays() write, since the recommendation_outcomes.bet_type
+    # CHECK constraint only allows ('parlay','edge'). This cannot cause a
+    # cross-kind collision: parlay_recommendations.parlay_id is one SERIAL
+    # PRIMARY KEY shared across kind='player'/'team'/'builder' rows (never
+    # reused), and this query's own `pr.kind = 'player'` filter means only
+    # kind='player' parlay_ids ever reach the guard. So a builder or team
+    # parlay_id can never appear as a candidate here, and the guard's NOT
+    # EXISTS still correctly stops any given parlay_id (of any kind) from
+    # being settled twice by whichever function already settled it.
     with engine.begin() as conn:
         candidates = conn.execute(
             text(
@@ -233,6 +244,9 @@ def team_leg_actual(totals, game_id, market):
 
 
 def settle_team_parlays(engine):
+    # Dedupe note: see settle_parlays() above — same guard shape, same
+    # reasoning. `pr.kind = 'team'` here means only team parlay_ids are ever
+    # candidates, so this can't collide with the player or builder paths.
     with engine.begin() as conn:
         candidates = conn.execute(
             text(
@@ -340,6 +354,9 @@ def builder_leg_key(leg):
 
 
 def settle_builder_parlays(engine):
+    # Dedupe note: see settle_parlays() above — same guard shape, same
+    # reasoning. `pr.kind = 'builder'` here means only builder parlay_ids are
+    # ever candidates, so this can't collide with the player or team paths.
     with engine.begin() as conn:
         candidates = conn.execute(
             text(
@@ -544,20 +561,85 @@ def settle_edges(engine, min_edge=DEFAULT_MIN_EDGE):
     return rows_inserted
 
 
+# The bet_type CHECK constraint pins every parlay row's DB value at 'parlay'
+# regardless of which recommender produced it (README §15 Task 2, 2026-07-21):
+# no migration, no constraint change. The builder's first settlements were
+# about to land in the same 'parlay' bucket as the legacy model-ranked
+# parlays (16-48-0, -57% ROI over 64 bets) and the team-parlay path, making
+# all three unreadable as one pooled record. The split happens entirely in
+# the read path via parlay_recommendations.kind, which every parlay_id FKs to.
+PARLAY_KIND_LABEL = {"player": "parlay_model", "team": "parlay_team", "builder": "parlay_builder"}
+
+
+def bet_type_label(bet_type, kind):
+    """Map a recommendation_outcomes row's bet_type plus its source
+    parlay_recommendations.kind (None for 'edge' rows, which carry no
+    parlay_id) to the reporting bucket used by both print_summary and the
+    /bet-performance API. 'parlay' is the defensive fallback for a kind this
+    map doesn't recognize (or a NULL kind on a 'parlay' row, which would mean
+    a broken FK — should not happen, but better a labeled bucket than a
+    silently dropped row).
+    """
+    if bet_type != "parlay":
+        return bet_type
+    return PARLAY_KIND_LABEL.get(kind, "parlay")
+
+
+def aggregate_bet_performance(rows):
+    """Pure aggregation over (bet_type, kind, n, wins, losses, pushes, staked,
+    pnl) rows — one row per (bet_type, kind) group, as produced by a
+    `GROUP BY ro.bet_type, pr.kind` query joined against
+    parlay_recommendations. Buckets each row via bet_type_label and appends a
+    combined 'all' row last. Returns a list of
+    (label, n, wins, losses, pushes, staked, pnl) tuples, sorted by label
+    with 'all' always last.
+
+    DB-free by design: the SQL side only has to GROUP BY and hand back raw
+    per-kind sums: everything after that is pure Python and unit-testable
+    without a database.
+    """
+    buckets = {}
+    order = []
+    for bet_type, kind, n, wins, losses, pushes, staked, pnl in rows:
+        label = bet_type_label(bet_type, kind)
+        staked, pnl = float(staked or 0), float(pnl or 0)
+        if label not in buckets:
+            buckets[label] = {"n": 0, "wins": 0, "losses": 0, "pushes": 0,
+                               "staked": 0.0, "pnl": 0.0}
+            order.append(label)
+        agg = buckets[label]
+        agg["n"] += n
+        agg["wins"] += wins
+        agg["losses"] += losses
+        agg["pushes"] += pushes
+        agg["staked"] += staked
+        agg["pnl"] += pnl
+
+    results = [(label, *buckets[label].values()) for label in sorted(order)]
+    if results:
+        total = {"n": 0, "wins": 0, "losses": 0, "pushes": 0, "staked": 0.0, "pnl": 0.0}
+        for label in order:
+            for key in total:
+                total[key] += buckets[label][key]
+        results.append(("all", *total.values()))
+    return results
+
+
 def print_summary(engine):
     with engine.begin() as conn:
         rows = conn.execute(
             text(
                 """
-                SELECT bet_type,
-                       SUM((result = 'win')::int) AS wins,
-                       SUM((result = 'loss')::int) AS losses,
-                       SUM((result = 'push')::int) AS pushes,
-                       SUM(stake) AS total_staked,
-                       SUM(pnl) AS total_pnl
-                FROM recommendation_outcomes
-                GROUP BY bet_type
-                ORDER BY bet_type
+                SELECT ro.bet_type, pr.kind,
+                       COUNT(*) AS n,
+                       SUM((ro.result = 'win')::int) AS wins,
+                       SUM((ro.result = 'loss')::int) AS losses,
+                       SUM((ro.result = 'push')::int) AS pushes,
+                       SUM(ro.stake) AS total_staked,
+                       SUM(ro.pnl) AS total_pnl
+                FROM recommendation_outcomes ro
+                LEFT JOIN parlay_recommendations pr ON pr.parlay_id = ro.parlay_id
+                GROUP BY ro.bet_type, pr.kind
                 """
             )
         ).fetchall()
@@ -566,19 +648,9 @@ def print_summary(engine):
         print("settle (all-time): no settled bets yet.")
         return
 
-    total_w = total_l = total_p = 0
-    total_staked = 0.0
-    total_pnl = 0.0
-    for bet_type, wins, losses, pushes, staked, pnl in rows:
-        staked, pnl = float(staked or 0), float(pnl or 0)
+    for label, n, wins, losses, pushes, staked, pnl in aggregate_bet_performance(rows):
         roi = pnl / staked if staked else 0.0
-        print(f"settle (all-time, {bet_type}): {wins}-{losses}-{pushes} W-L-P, P&L {pnl:+.2f}u, ROI {roi:+.1%}")
-        total_w, total_l, total_p = total_w + wins, total_l + losses, total_p + pushes
-        total_staked += staked
-        total_pnl += pnl
-
-    total_roi = total_pnl / total_staked if total_staked else 0.0
-    print(f"settle (all-time, all): {total_w}-{total_l}-{total_p} W-L-P, P&L {total_pnl:+.2f}u, ROI {total_roi:+.1%}")
+        print(f"settle (all-time, {label}): {wins}-{losses}-{pushes} W-L-P, P&L {pnl:+.2f}u, ROI {roi:+.1%}")
 
 
 def settle(engine):

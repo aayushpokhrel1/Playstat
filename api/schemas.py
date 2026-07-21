@@ -123,10 +123,17 @@ class EdgeDistributionOut(BaseModel):
 
 
 class ParlayLeg(BaseModel):
-    player_id: int
+    # player_id/stat_type are Optional, not required: the dormant kind='team'
+    # parlay_recommendations shape (optimizer/team_parlay.py) carries neither
+    # (it has `market` instead) -- required ints/strs here would raise a
+    # pydantic ValidationError (a 500) the moment a team row entered
+    # /parlay-recommendations' result window, same failure class as README
+    # §15.10 bug #5. Additive/widening only: every existing (player-kind)
+    # consumer still gets both fields populated exactly as before.
+    player_id: int | None = None
     player_name: str | None = None  # resolved at read time, not stored in legs JSONB
     game_id: int
-    stat_type: str
+    stat_type: str | None = None
     side: str
     model_prob: float
     odds: int
