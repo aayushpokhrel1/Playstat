@@ -45,7 +45,7 @@ present partial results as complete. README §15.10 records truncation as a
 | # | Decision | Choice |
 |---|----------|--------|
 | 1 | First paint | **Server-render the saved nightly constructions**; controls refine below with an explicit Build and a real pending state. No search on page load. |
-| 2 | Truncation | **Surface it in the API and the UI**, and separately raise/tune the node budget so common queries finish exhaustively. |
+| 2 | Truncation | **Surface it in the API and the UI** (this spec). Separately, **raise/tune the node budget** so common queries finish exhaustively — split into its own plan (see §7). |
 | 3 | Controls | **Mode toggle**: "I want a payout of…" / "I want a hit chance of at least…". Only the pinned control is editable; the other is shown as the derived result. Both-pinned is not exposed in v1. |
 | 4 | Paper record | **Compact record strip on the page**, `parlay_builder` only. |
 | 5 | Signal color | **Green means "safe", not "edge"** — joint probability turns Signal Green at or above 75%, Ink below. Requires a one-line DESIGN.md amendment. |
@@ -71,8 +71,11 @@ All three are live and verified (195 tests green, checked against the running AP
    it, that endpoint 500s the first morning the builder runs alone, taking down
    Budgerr's Tonight view. See §8.
 
-Stage 2's engine work (§7) must be sequenced *after* (1), because both rewrite the
-same search bounds in `builder_core.build()`.
+The node-budget engine work (§7) is a **separate plan**, sequenced *after* the
+merged payout-floor change (1), because both rewrite the same search bounds in
+`builder_core.build()`. It is independent of the dashboard plan — the dashboard
+surfaces whatever the `truncated` flag reports regardless of how far the budget
+is later tuned — so the two plans can proceed in either order or in parallel.
 
 ## 5. Architecture
 
@@ -170,23 +173,22 @@ or `/parlay-recommendations`. Note also that §6.1 changes the *live*
 current bare-list shape, so this change must be communicated to that session
 before they build against it.
 
-## 7. Engine work — raise the node budget
+## 7. Engine work — raise the node budget (SEPARATE PLAN)
 
-Sequenced after the payout-floor change. The goal is that the common queries the
-dashboard actually issues finish exhaustively rather than truncating.
+Split out of this dashboard spec at the user's direction (2026-07-21). It is
+tracked as its own plan,
+[`docs/superpowers/plans/2026-07-21-builder-node-budget.md`](plans/2026-07-21-builder-node-budget.md),
+and does not block the dashboard: the dashboard honestly surfaces whatever the
+`truncated` flag reports (§6.1), so the two can ship in either order.
 
-Levers, in preference order: tighten pruning before raising `MAX_NODES`, since a
-raised budget trades latency directly against the 4–13s response time this design
-is already working around. The existing suffix-maximum bound and the price-ascending
-within-game ordering are exact; look for further exact bounds before considering
-anything lossy. Any heuristic that could drop the true optimum is out of scope —
-Stage 1's search is exact and must stay exact.
-
-Report, for each of `target_payout=1.4`, `target_payout=2.0`, and `min_prob=0.75`
-on a full slate: node count, wall time, and whether truncation still occurs.
-If a query still truncates after tuning, that is an acceptable outcome — it is
-surfaced in the UI — but it must be reported honestly, not hidden by raising the
-budget until the warning stops appearing.
+Summary of its intent (full detail in that plan): make the common dashboard
+queries finish exhaustively rather than truncating. Tighten exact pruning before
+raising `MAX_NODES`, since a raised budget trades latency directly against the
+4–13s response time. The suffix-maximum bound and price-ascending within-game
+ordering are exact; any heuristic that could drop the true optimum is out of
+scope — Stage 1's search is exact and must stay exact. If a query still truncates
+after tuning, that is acceptable and surfaced in the UI, never hidden by raising
+the budget until the warning stops appearing.
 
 ## 8. Why `/parlay-recommendations` is fenced off
 
