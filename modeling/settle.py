@@ -317,6 +317,131 @@ def settle_team_parlays(engine):
     return inserted
 
 
+def builder_leg_key(leg):
+    """Lookup key for a builder leg, dispatched on its kind.
+
+    Builder parlays mix player-prop and team-market legs in one bet, so each leg
+    must resolve against a different source table — unlike settle_parlays /
+    settle_team_parlays, which each assume a homogeneous leg list.
+    """
+    kind = leg.get("kind")
+    if kind == "player":
+        return ("player", int(leg["player_id"]), int(leg["game_id"]), leg["stat_type"])
+    if kind == "team":
+        return ("team", int(leg["game_id"]), leg["market"])
+    raise ValueError(f"unknown builder leg kind: {kind!r}")
+
+
+def settle_builder_parlays(engine):
+    with engine.begin() as conn:
+        candidates = conn.execute(
+            text(
+                """
+                SELECT pr.parlay_id, pr.created_at, pr.legs
+                FROM parlay_recommendations pr
+                WHERE pr.kind = 'builder' AND NOT EXISTS (
+                    SELECT 1 FROM recommendation_outcomes ro
+                    WHERE ro.bet_type = 'parlay' AND ro.parlay_id = pr.parlay_id)
+                """
+            )
+        ).fetchall()
+        if not candidates:
+            print("settle: no new builder parlays to evaluate.")
+            return 0
+
+        parsed = [(pid, ca, _as_legs_list(raw)) for pid, ca, raw in candidates]
+        parsed = [(pid, ca, blob["legs"] if isinstance(blob, dict) else blob)
+                  for pid, ca, blob in parsed]
+        game_ids = sorted({int(l["game_id"]) for _, _, legs in parsed for l in legs})
+
+        games = pd.read_sql(text("SELECT game_id, status FROM games WHERE game_id = ANY(:g)"),
+                            conn, params={"g": game_ids})
+        pstats = pd.read_sql(
+            text("""SELECT player_id, game_id, stat_type, value
+                    FROM player_game_stats WHERE game_id = ANY(:g)"""),
+            conn, params={"g": game_ids})
+        tstats = pd.read_sql(
+            text("""SELECT game_id, stat_type, SUM(value) AS total
+                    FROM team_game_stats
+                    WHERE game_id = ANY(:g) AND stat_type IN ('runs_inning_1','runs_f5')
+                    GROUP BY game_id, stat_type"""),
+            conn, params={"g": game_ids})
+        plines = pd.read_sql(
+            text("""SELECT player_id, game_id, stat_type, line_value, pulled_at
+                    FROM prop_lines WHERE game_id = ANY(:g) ORDER BY pulled_at"""),
+            conn, params={"g": game_ids})
+        glines = pd.read_sql(
+            text("""SELECT game_id, market, line_value, pulled_at
+                    FROM game_lines WHERE game_id = ANY(:g) ORDER BY pulled_at"""),
+            conn, params={"g": game_ids})
+
+    status = dict(zip(games["game_id"], games["status"]))
+    pstats_lookup = {(r.player_id, r.game_id, r.stat_type): r.value for r in pstats.itertuples()}
+    stat_to_market = {"runs_inning_1": "first_inning_runs", "runs_f5": "f5_runs"}
+    tstats_lookup = {(int(r.game_id), stat_to_market[r.stat_type]): float(r.total)
+                     for r in tstats.itertuples()}
+    plines_grp = plines.groupby(["player_id", "game_id", "stat_type"])
+    glines_grp = glines.groupby(["game_id", "market"])
+
+    inserted = 0
+    with engine.begin() as conn:
+        for parlay_id, created_at, legs in parsed:
+            results, odds_list, audit, ready = [], [], [], True
+            for leg in legs:
+                gid = int(leg["game_id"])
+                if status.get(gid) != "FT":
+                    ready = False; break
+
+                key = builder_leg_key(leg)
+                if key[0] == "player":
+                    _, pid, _, stat_type = key
+                    actual = pstats_lookup.get((pid, gid, stat_type))
+                    try:
+                        snaps = plines_grp.get_group((pid, gid, stat_type))
+                    except KeyError:
+                        ready = False; break
+                    audit_id = {"player_id": pid, "stat_type": stat_type}
+                else:
+                    _, _, market = key
+                    actual = tstats_lookup.get((gid, market))
+                    try:
+                        snaps = glines_grp.get_group((gid, market))
+                    except KeyError:
+                        ready = False; break
+                    audit_id = {"market": market}
+
+                if actual is None or pd.isna(actual):
+                    ready = False; break
+                line_value = _rec_snapshot(snaps, created_at)["line_value"]
+                if line_value is None or pd.isna(line_value):
+                    ready = False; break
+
+                res = settle_leg(leg["side"], float(actual), float(line_value))
+                results.append(res)
+                odds_list.append(american_to_decimal(leg["odds"]))
+                audit.append({**audit_id, "kind": leg["kind"], "game_id": gid,
+                              "side": leg["side"], "line": float(line_value),
+                              "odds": int(leg["odds"]), "actual": float(actual),
+                              "result": res})
+            if not ready:
+                continue
+            result, decimal_odds, pnl = parlay_result(results, odds_list)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO recommendation_outcomes
+                        (bet_type, parlay_id, result, n_legs, stake, decimal_odds, pnl, legs, recommended_at)
+                    VALUES ('parlay', :pid, :res, :n, 1, :co, :pnl, CAST(:legs AS JSONB), :ra)
+                    """
+                ),
+                {"pid": int(parlay_id), "res": result, "n": len(legs),
+                 "co": float(decimal_odds), "pnl": float(pnl),
+                 "legs": json.dumps(audit), "ra": created_at})
+            inserted += 1
+    print(f"settle: settled {inserted} new builder parlays ({len(parsed) - inserted} not yet ready)")
+    return inserted
+
+
 def settle_edges(engine, min_edge=DEFAULT_MIN_EDGE):
     with engine.begin() as conn:
         candidates = pd.read_sql(
@@ -450,10 +575,13 @@ def print_summary(engine):
 
 
 def settle(engine):
-    settle_parlays(engine)
-    settle_team_parlays(engine)
-    settle_edges(engine)
+    total = 0
+    total += settle_parlays(engine)
+    total += settle_team_parlays(engine)
+    total += settle_builder_parlays(engine)
+    total += settle_edges(engine)
     print_summary(engine)
+    return total
 
 
 if __name__ == "__main__":
