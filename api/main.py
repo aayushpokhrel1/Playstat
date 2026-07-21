@@ -402,6 +402,24 @@ def game_predictions(date: date_type | None = None, sport: str | None = None):
     ]
 
 
+def _as_legs_list(raw):
+    """Unwrap a parlay_recommendations.legs JSONB value into a plain list of
+    leg dicts. Same defensive shape as modeling.settle._as_legs_list (README
+    §15.10 bug #4): psycopg2 hands JSONB back already parsed, so the
+    team/builder {"class", "legs": [...]} wrapper arrives as a dict, and
+    json.loads(dict) raises TypeError, not a parse error. This endpoint's
+    `kind` filter (below) keeps builder rows out entirely, but the dormant
+    kind='team' path shares this exact wrapper shape and would hit the
+    identical crash the moment it goes live — fixed defensively here too
+    (README §15.10 bug #5).
+    """
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if isinstance(raw, dict):
+        return raw["legs"]
+    return raw
+
+
 @app.get("/parlay-recommendations", response_model=list[ParlayRecommendationOut])
 def list_parlay_recommendations(limit: int = 10):
     with engine.begin() as conn:
@@ -410,6 +428,16 @@ def list_parlay_recommendations(limit: int = 10):
                 """
                 SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
                 FROM parlay_recommendations
+                -- External-contract surface (Budgerr, README §7.1/§15.6) —
+                -- additive-only. This endpoint's response schema (ParlayLeg)
+                -- models only the pre-builder player/team leg shape, and
+                -- builder constructions (kind='builder') mix player+team legs
+                -- in one parlay and have their own endpoint/schema
+                -- (/parlay-builder, BuilderParlayOut). Do NOT remove this
+                -- filter to "let builder rows through here too" — it will
+                -- 500 the moment a builder row enters the LIMIT window
+                -- (README §15.10 bug #5, hit live 2026-07-21).
+                WHERE kind IN ('player', 'team')
                 ORDER BY created_at DESC, joint_prob DESC
                 LIMIT :limit
                 """
@@ -417,11 +445,15 @@ def list_parlay_recommendations(limit: int = 10):
             {"limit": limit},
         ).fetchall()
 
-    parlays = [(r, r[5] if isinstance(r[5], list) else json.loads(r[5])) for r in rows]
+    parlays = [(r, _as_legs_list(r[5])) for r in rows]
 
-    # Legs are stored with player_id only; resolve names in one query so
-    # consumers (Budgerr's Tonight view) can render them directly.
-    player_ids = {leg["player_id"] for _, legs_raw in parlays for leg in legs_raw}
+    # Legs are stored with player_id only for the (live) player kind; resolve
+    # names in one query so consumers (Budgerr's Tonight view) can render
+    # them directly. The dormant team-kind shape carries no player_id at all
+    # — tolerate that rather than raising a KeyError.
+    player_ids = {
+        leg["player_id"] for _, legs_raw in parlays for leg in legs_raw if "player_id" in leg
+    }
     names = {}
     if player_ids:
         with engine.begin() as conn:
@@ -441,7 +473,7 @@ def list_parlay_recommendations(limit: int = 10):
                 target_payout=r[2],
                 joint_prob=r[3],
                 combined_odds=r[4],
-                legs=[ParlayLeg(**leg, player_name=names.get(leg["player_id"])) for leg in legs_raw],
+                legs=[ParlayLeg(**leg, player_name=names.get(leg.get("player_id"))) for leg in legs_raw],
             )
         )
     return results
