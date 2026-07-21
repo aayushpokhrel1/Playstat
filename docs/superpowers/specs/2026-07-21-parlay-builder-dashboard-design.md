@@ -52,10 +52,10 @@ present partial results as complete. README §15.10 records truncation as a
 | 6 | Route | **`/builder`**, titled "Parlay Builder". |
 | 7 | Saved-row source | **A new builder-scoped read** (`/parlay-builder/saved`) of the precomputed nightly rows, returning a superset of the live-search shape. Now also a **finalized Budgerr-facing contract** (see §6.2). `/parlay-recommendations` stays out of the dashboard's path entirely. |
 
-## 4. Prerequisite — landing separately, before this work
+## 4. Prerequisite — LANDED 2026-07-21 (`38e9616`)
 
-Three changes are in flight in a worktree and must merge before Stage 2 starts.
-Stage 2 depends on all three.
+Three changes merged to main before Stage 2 starts; Stage 2 depends on all three.
+All three are live and verified (195 tests green, checked against the running API).
 
 1. **A pinned target payout becomes a floor**, not the centre of a tolerance band,
    with progressive widening so the ceiling prune (and therefore the node budget)
@@ -107,9 +107,12 @@ warns that its conventions differ from training data (`proxy.ts`, not
 
 ## 6. API changes
 
-Both are additive with respect to the Budgerr contract (README §7.1), which covers
-`/edges`, `/box-scores`, `/games`, `/game-predictions`, and `/parlay-recommendations`.
-Neither endpoint below is on it.
+Neither change touches an existing Budgerr contract endpoint (`/edges`,
+`/box-scores`, `/games`, `/game-predictions`, `/parlay-recommendations`). §6.1
+changes a Stage-1 endpoint that has no external consumer yet; §6.2 *creates* a
+new endpoint that is deliberately promoted to a Budgerr contract surface (see
+§6.2). "Additive-only" therefore applies going forward to §6.2 the moment it
+ships, and to the existing §7.1 surfaces throughout.
 
 **6.1 `/parlay-builder` returns an object, not a bare list.**
 
@@ -209,9 +212,13 @@ mixed player and team legs. **Do not remove that filter.**
 
 **Header.** "Parlay Builder", with a back link matching `web/app/edges/page.tsx`.
 
-**Record strip.** `parlay_builder` W-L-P, ROI, and n from `/bet-performance`. It
-will read 0-0-0 until the first slate settles; that is honest and stays. When
-n = 0, say so in words rather than rendering an empty table.
+**Record strip.** `parlay_builder` W-L-P, ROI, and n from `/bet-performance`.
+Until the first builder slate settles, `/bet-performance` has **no
+`parlay_builder` row at all** (verified live 2026-07-21 — the endpoint returns
+`edge`, `parlay_model`, `all`, and no builder key, because zero builder outcomes
+exist). The page must treat a missing `parlay_builder` key as 0-0-0 / n=0 and say
+so in words, not render an empty table and not error on the absent key. This is
+the normal state for the first day or two, and it is honest.
 
 **Framing copy.** Permanent, not dismissible, not behind a disclosure. Covers:
 what joint probability means; that a ~2x parlay is roughly a coin flip; that each
