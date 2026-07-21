@@ -11,6 +11,8 @@ from api.schemas import (
     BacktestRunOut,
     BetPerformanceOut,
     BoxScoreOut,
+    BuilderLegOut,
+    BuilderParlayOut,
     ClvSummaryOut,
     EdgeDistributionOut,
     EdgeOut,
@@ -28,6 +30,7 @@ from api.schemas import (
 from ingestion.db import get_engine
 from modeling.distributions import pmf_list, prob_over
 from modeling.train import model_version, stat_family
+from optimizer import builder, builder_core
 
 app = FastAPI(title="Playstat API", dependencies=[Depends(require_api_key)])
 
@@ -441,6 +444,55 @@ def list_parlay_recommendations(limit: int = 10):
             )
         )
     return results
+
+
+@app.get("/parlay-builder", response_model=list[BuilderParlayOut])
+def parlay_builder(
+    target_payout: float | None = None,
+    min_prob: float | None = None,
+    tolerance: float = builder_core.DEFAULT_TOLERANCE,
+    floor: float = builder_core.DEFAULT_FLOOR,
+    min_legs: int = builder_core.DEFAULT_MIN_LEGS,
+    max_legs: int = builder_core.DEFAULT_MAX_LEGS,
+    top_n: int = 10,
+):
+    """Low-risk parlay constructions ranked by de-vigged MARKET probability.
+
+    Pin target_payout and/or min_prob. joint_prob is the honest probability the
+    whole parlay hits. No edge or expected-value claim is made or returned.
+    """
+    if target_payout is None and min_prob is None:
+        raise HTTPException(
+            status_code=422,
+            detail="pin at least one axis: target_payout and/or min_prob",
+        )
+    if max_legs < min_legs:
+        raise HTTPException(status_code=422, detail="max_legs must be >= min_legs")
+
+    legs = builder.load_legs(engine, floor)
+    if not legs:
+        return []
+    legs = builder_core.cap_candidates(legs, max_legs)
+    results = builder_core.build(
+        legs, target_payout=target_payout, tolerance=tolerance, min_prob=min_prob,
+        min_legs=min_legs, max_legs=max_legs, top_n=top_n,
+    )
+    return [
+        BuilderParlayOut(
+            legs=[
+                BuilderLegOut(
+                    game_id=leg["game_id"], kind=leg["kind"], label=leg["label"],
+                    player_id=leg["player_id"], stat_type=leg["stat_type"],
+                    market=leg["market"], side=leg["side"], line=leg["line_value"],
+                    odds=leg["american_odds"], market_prob=leg["market_prob"],
+                    model_prob=leg["model_prob"],
+                )
+                for leg in r["legs"]
+            ],
+            combined_odds=r["combined_odds"], joint_prob=r["joint_prob"], n_legs=r["n_legs"],
+        )
+        for r in results
+    ]
 
 
 @app.get("/clv-summary", response_model=list[ClvSummaryOut])

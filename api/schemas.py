@@ -168,3 +168,25 @@ class BacktestRunOut(BaseModel):
     mae: float | None
     coverage_16: float | None
     coverage_84: float | None
+
+
+class BuilderLegOut(BaseModel):
+    game_id: int
+    kind: str
+    label: str
+    player_id: int | None = None
+    stat_type: str | None = None
+    market: str | None = None
+    side: str
+    line: float
+    odds: int
+    market_prob: float
+    # Shown for context only — never used to rank or filter (README §15.3).
+    model_prob: float | None = None
+
+
+class BuilderParlayOut(BaseModel):
+    legs: list[BuilderLegOut]
+    combined_odds: float
+    joint_prob: float
+    n_legs: int
