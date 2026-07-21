@@ -183,13 +183,63 @@ def test_dedupe_does_not_merge_across_games():
 
 def test_build_reaches_high_payout_when_odds_support_it():
     """Regression: a top-N-by-probability cap collapsed the odds ceiling and made
-    the 2x target unreachable even though the legs supported ~3x (2026-07-21)."""
+    the 2x target unreachable even though the legs supported ~3x (2026-07-21).
+    Also exercises progressive widening: no combo of these legs pays in
+    [2.0, 2.3] (the initial ceiling), only the two 1.70x legs together at
+    2.89x, so this only succeeds if the search widens past its first pass."""
     # Many cheap near-certain legs plus a few genuinely priced ones.
     legs = [_leg(i, 0.90, 1.05) for i in range(1, 40)]
     legs += [_leg(100, 0.60, 1.70), _leg(101, 0.60, 1.70)]
     out = build(legs, target_payout=2.0, tolerance=0.15)
-    assert out, "expected a ~2x construction to be reachable"
-    assert any(r["combined_odds"] >= 1.7 for r in out)
+    assert out, "expected a >=2x construction to be reachable"
+    assert all(r["combined_odds"] >= 2.0 for r in out)
+
+
+def test_build_target_payout_is_a_floor_never_below_it():
+    """Task 1 core fix: a pinned target_payout must never return a
+    construction cheaper than the target — it is a floor, not the centre of
+    a tolerance band."""
+    legs = [_leg(1, 0.9, 1.2), _leg(2, 0.9, 1.2), _leg(3, 0.8, 1.5), _leg(4, 0.8, 1.5)]
+    out = build(legs, target_payout=1.4, tolerance=0.5, top_n=50)
+    assert out
+    assert all(r["combined_odds"] >= 1.4 for r in out)
+
+
+def test_build_target_payout_excludes_below_floor_even_if_safer():
+    """The below-floor pair here is *more* probable than the qualifying pair
+    (0.95*0.95=.9025 vs 0.6*0.6=.36) but pays only 1.21x against a 2.0x floor
+    — it must never appear, no matter how safe it looks."""
+    legs = [_leg(1, 0.95, 1.1), _leg(2, 0.95, 1.1),   # payout 1.21x — below floor
+            _leg(3, 0.60, 1.5), _leg(4, 0.60, 1.5)]    # payout 2.25x — above floor
+    out = build(legs, target_payout=2.0, tolerance=0.3, top_n=50)
+    assert out
+    assert all(r["combined_odds"] >= 2.0 for r in out)
+    assert not any(r["combined_odds"] == pytest.approx(1.21) for r in out)
+
+
+def test_build_target_payout_ranks_highest_joint_prob_at_or_above_floor():
+    """Among qualifying (>= floor) constructions, the top-ranked result must be
+    the one with the highest joint_prob, not simply the cheapest payout."""
+    legs = [_leg(1, 0.95, 1.5), _leg(2, 0.95, 1.5),   # payout 2.25x, joint .9025
+            _leg(3, 0.60, 1.5), _leg(4, 0.60, 1.5)]    # payout 2.25x, joint .36
+    out = build(legs, target_payout=2.0, tolerance=0.3, top_n=50)
+    assert out
+    assert out[0]["joint_prob"] == pytest.approx(0.9025)
+    assert out[0]["joint_prob"] == max(r["joint_prob"] for r in out)
+
+
+def test_build_progressive_widening_finds_result_beyond_unbounded_pass():
+    """No combo pays within any of the bounded ceilings (target*1.1, *1.5,
+    *3.0) — only the fully unbounded final pass can find the one qualifying
+    (9.0x) construction. Exercises every widening step, including the
+    fallback to hi=None."""
+    legs = [_leg(1, 0.5, 3.0), _leg(2, 0.5, 3.0)]
+    stats = {}
+    out = build(legs, target_payout=2.0, tolerance=0.1, stats=stats)
+    assert out
+    assert out[0]["combined_odds"] == pytest.approx(9.0)
+    assert stats["matches"] == 1
+    assert stats["truncated"] is False
 
 
 def test_build_prefers_fewest_legs_at_a_given_payout():

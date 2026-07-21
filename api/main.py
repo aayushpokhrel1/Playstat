@@ -460,6 +460,15 @@ def parlay_builder(
 
     Pin target_payout and/or min_prob. joint_prob is the honest probability the
     whole parlay hits. No edge or expected-value claim is made or returned.
+
+    target_payout is a FLOOR, not the centre of a tolerance band: returns the
+    safest (highest joint-prob) construction that pays AT LEAST target_payout.
+    tolerance only sets the initial search width above that floor (as a
+    fraction, e.g. 0.10 = 10% above the floor) — a performance knob, not a
+    correctness one. If nothing qualifies within it the search widens
+    automatically (1.5x, 3x, then unbounded) until it finds the cheapest
+    qualifying construction, so tolerance never changes *which* result is
+    returned, only how quickly it's found.
     """
     if target_payout is None and min_prob is None:
         raise HTTPException(
