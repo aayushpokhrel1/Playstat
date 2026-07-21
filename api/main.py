@@ -472,7 +472,6 @@ def parlay_builder(
     legs = builder.load_legs(engine, floor)
     if not legs:
         return []
-    legs = builder_core.cap_candidates(legs, max_legs)
     results = builder_core.build(
         legs, target_payout=target_payout, tolerance=tolerance, min_prob=min_prob,
         min_legs=min_legs, max_legs=max_legs, top_n=top_n,

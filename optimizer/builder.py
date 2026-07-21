@@ -18,7 +18,7 @@ from sqlalchemy import text
 from ingestion import db
 from optimizer.builder_core import (
     DEFAULT_FLOOR, DEFAULT_MAX_LEGS, DEFAULT_MIN_LEGS, DEFAULT_TOLERANCE,
-    build, cap_candidates, normalize_player_leg, normalize_team_leg, passes_floor,
+    build, normalize_player_leg, normalize_team_leg, passes_floor,
 )
 
 TEAM_MARKETS = ("first_inning_runs", "f5_runs")
@@ -147,13 +147,14 @@ def main():
         print("no candidate legs — nothing to build.")
         return
 
-    legs = cap_candidates(legs, args.max_legs)
-    print(f"searching {len(legs)} legs, {args.min_legs}-{args.max_legs} per parlay")
-
+    stats = {}
     results = build(legs, target_payout=args.target_payout, tolerance=args.tolerance,
                     min_prob=args.min_prob, min_legs=args.min_legs,
-                    max_legs=args.max_legs, top_n=args.top_n)
-    print(f"constructions found: {len(results)}")
+                    max_legs=args.max_legs, top_n=args.top_n, stats=stats)
+    print(f"searched {stats['candidate_games']} games, {stats['nodes']:,} nodes")
+    if stats["truncated"]:
+        print("WARNING: search hit its node budget — results are partial, not exhaustive.")
+    print(f"constructions found: {stats['matches']} (showing {len(results)})")
     for r in results:
         print(f"  {r['combined_odds']:.2f}x  ~{r['joint_prob']:.1%} to hit  "
               f"({r['n_legs']} legs)")

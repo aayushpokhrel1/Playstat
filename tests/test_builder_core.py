@@ -80,7 +80,7 @@ def test_normalize_player_leg_keeps_model_prob_optional():
     assert leg["model_prob"] is None
 
 
-from optimizer.builder_core import build, cap_candidates, MAX_COMBOS
+from optimizer.builder_core import build, dedupe_by_price
 
 
 def _leg(game_id, prob, dec_odds, kind="player"):
@@ -148,20 +148,64 @@ def test_build_no_legs_returns_empty():
     assert build([], target_payout=2.0) == []
 
 
-def test_cap_candidates_bounds_combination_count():
-    legs = [_leg(i, 0.5 + (i % 50) / 200, 1.3) for i in range(1, 501)]
-    capped = cap_candidates(legs, max_legs=4, max_combos=100_000)
-    from math import comb
-    assert comb(len(capped), 4) <= 100_000
-    assert len(capped) < len(legs)
+def test_dedupe_keeps_best_probability_at_each_price():
+    # Same game, same price: only the more probable leg can matter.
+    legs = [_leg(1, 0.60, 1.3), _leg(1, 0.75, 1.3)]
+    out = dedupe_by_price(legs)
+    assert len(out) == 1
+    assert out[0]["market_prob"] == 0.75
 
 
-def test_cap_candidates_keeps_highest_market_prob():
-    legs = [_leg(1, 0.60, 1.3), _leg(2, 0.90, 1.3), _leg(3, 0.70, 1.3)]
-    capped = cap_candidates(legs, max_legs=2, max_combos=1)
-    assert capped[0]["market_prob"] == 0.90
+def test_dedupe_keeps_distinct_prices_within_a_game():
+    legs = [_leg(1, 0.75, 1.3), _leg(1, 0.60, 1.7)]
+    assert len(dedupe_by_price(legs)) == 2
 
 
-def test_cap_candidates_noop_when_already_small():
-    legs = [_leg(1, 0.6, 1.3), _leg(2, 0.6, 1.3)]
-    assert len(cap_candidates(legs, max_legs=2, max_combos=MAX_COMBOS)) == 2
+def test_dedupe_does_not_merge_across_games():
+    legs = [_leg(1, 0.60, 1.3), _leg(2, 0.75, 1.3)]
+    assert len(dedupe_by_price(legs)) == 2
+
+
+def test_build_reaches_high_payout_when_odds_support_it():
+    """Regression: a top-N-by-probability cap collapsed the odds ceiling and made
+    the 2x target unreachable even though the legs supported ~3x (2026-07-21)."""
+    # Many cheap near-certain legs plus a few genuinely priced ones.
+    legs = [_leg(i, 0.90, 1.05) for i in range(1, 40)]
+    legs += [_leg(100, 0.60, 1.70), _leg(101, 0.60, 1.70)]
+    out = build(legs, target_payout=2.0, tolerance=0.15)
+    assert out, "expected a ~2x construction to be reachable"
+    assert any(r["combined_odds"] >= 1.7 for r in out)
+
+
+def test_build_prefers_fewest_legs_at_a_given_payout():
+    # A 2-leg route and a 3-leg route to the same payout: fewer legs wins on
+    # joint probability, so it must rank first.
+    legs = [_leg(1, 0.70, 1.45), _leg(2, 0.70, 1.45),
+            _leg(3, 0.80, 1.28), _leg(4, 0.80, 1.28), _leg(5, 0.80, 1.28)]
+    out = build(legs, target_payout=2.1, tolerance=0.15)
+    assert out
+    assert out[0]["n_legs"] == 2
+
+
+def test_build_respects_node_budget_and_reports_truncation():
+    legs = [_leg(i, 0.9, 1.1) for i in range(1, 60)]
+    stats = {}
+    build(legs, min_prob=0.0, max_legs=4, max_nodes=500, stats=stats)
+    assert stats["truncated"] is True
+    assert stats["nodes"] <= 501
+
+
+def test_build_stats_reports_candidate_games():
+    legs = [_leg(1, 0.8, 1.25), _leg(2, 0.8, 1.25), _leg(3, 0.8, 1.25)]
+    stats = {}
+    build(legs, target_payout=1.5625, tolerance=0.01, stats=stats)
+    assert stats["candidate_games"] == 3
+    assert stats["truncated"] is False
+
+
+def test_build_never_returns_two_legs_from_one_game():
+    legs = [_leg(1, 0.8, 1.25), _leg(1, 0.8, 1.30), _leg(2, 0.8, 1.25),
+            _leg(2, 0.8, 1.30), _leg(3, 0.8, 1.25)]
+    for r in build(legs, min_prob=0.0, max_legs=3, top_n=50):
+        ids = [leg["game_id"] for leg in r["legs"]]
+        assert len(set(ids)) == len(ids)

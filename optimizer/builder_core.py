@@ -60,70 +60,149 @@ def normalize_team_leg(row):
     return leg
 
 
+import heapq
 import itertools
-from math import comb
 
 DEFAULT_TOLERANCE = 0.15
 DEFAULT_MIN_LEGS = 2
 DEFAULT_MAX_LEGS = 4
-# Bounds the brute-force search. The uncapped player optimizer was OOM-killed
-# (SIGKILL) on 2026-07-18 at ~198M combinations — see README §11/§15.
-MAX_COMBOS = 5_000_000
+# Hard ceiling on search work. The old uncapped player optimizer was OOM-killed
+# (SIGKILL) on 2026-07-18 — see README §11/§15. The game-structured search below
+# makes blowing this budget very unlikely, but it stays as a guaranteed bound.
+MAX_NODES = 5_000_000
 
 
-def cap_candidates(legs, max_legs=DEFAULT_MAX_LEGS, max_combos=MAX_COMBOS):
-    """Keep the highest-market-probability legs such that C(n, max_legs) <= max_combos."""
-    legs = sorted(legs, key=lambda leg: leg["market_prob"], reverse=True)
-    if len(legs) <= max_legs:
-        return legs
-    n = len(legs)
-    while n > max_legs and comb(n, max_legs) > max_combos:
-        n -= 1
-    return legs[:n]
+def dedupe_by_price(legs):
+    """Per game, keep only the highest-probability leg at each distinct price.
+
+    Two legs in the same game at the same decimal odds contribute identically to
+    the payout, so the less probable one can never be part of a better parlay.
+    Lossless (to 3-decimal price granularity) — unlike a global "keep the top-N
+    most probable legs" cap, which silently collapses the odds ceiling and can
+    make the requested payout unreachable.
+    """
+    best = {}
+    for leg in legs:
+        key = (leg["game_id"], round(leg["decimal_odds"], 3))
+        current = best.get(key)
+        if current is None or leg["market_prob"] > current["market_prob"]:
+            best[key] = leg
+    return list(best.values())
 
 
 def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
-          min_legs=DEFAULT_MIN_LEGS, max_legs=DEFAULT_MAX_LEGS, top_n=10):
+          min_legs=DEFAULT_MIN_LEGS, max_legs=DEFAULT_MAX_LEGS, top_n=10,
+          max_nodes=MAX_NODES, stats=None):
     """Across-game parlay constructions, two-axis filtered and ranked.
 
     Pin target_payout -> rank by joint probability (safest route to that payout).
     Pin min_prob      -> rank by payout (biggest payout at that safety level).
+
     Legs from the same game are never combined: the joint probability is a plain
-    product, which is only valid for independent (different-game) legs.
+    product, which is only valid for independent (different-game) legs. That
+    constraint is enforced structurally — the search picks a set of GAMES and
+    then one leg from each, so same-game pairs are never generated in the first
+    place. Enumerating flat leg tuples instead would generate billions of
+    same-game combinations only to discard them.
+
+    Pruning is exact, not heuristic: decimal odds are all >= 1, so a partial
+    product only grows, and any branch already past the payout ceiling is dead.
+    Legs within a game are ordered by price so that test can stop a whole run.
     """
     if not legs:
         return []
 
-    results = []
-    for size in range(min_legs, max_legs + 1):
-        for combo in itertools.combinations(legs, size):
-            game_ids = [leg["game_id"] for leg in combo]
-            if len(set(game_ids)) != len(game_ids):
-                continue
+    by_game = {}
+    for leg in dedupe_by_price(legs):
+        by_game.setdefault(leg["game_id"], []).append(leg)
+    games = sorted(by_game.values(), key=lambda gl: min(l["decimal_odds"] for l in gl))
+    for group in games:
+        group.sort(key=lambda leg: leg["decimal_odds"])
 
-            combined_odds = 1.0
-            joint_prob = 1.0
-            for leg in combo:
-                combined_odds *= leg["decimal_odds"]
-                joint_prob *= leg["market_prob"]
+    lo = hi = None
+    if target_payout is not None:
+        lo = target_payout * (1 - tolerance)
+        hi = target_payout * (1 + tolerance)
 
-            if target_payout is not None and \
-                    abs(combined_odds - target_payout) / target_payout > tolerance:
-                continue
-            if min_prob is not None and joint_prob < min_prob:
-                continue
+    n_games = len(games)
+    game_max = [max(leg["decimal_odds"] for leg in gl) for gl in games]
+    # best_from[gi][r] = the largest payout obtainable by taking r legs from
+    # games[gi:]. Lets a branch that can never reach the payout floor die early,
+    # which matters because most legs are heavy favourites priced near 1.0x.
+    best_from = []
+    for gi in range(n_games + 1):
+        prefix = [1.0]
+        for value in sorted(game_max[gi:], reverse=True):
+            prefix.append(prefix[-1] * value)
+        best_from.append(prefix)
 
-            results.append({
-                "legs": list(combo),
-                "combined_odds": combined_odds,
-                "joint_prob": joint_prob,
+    rank_by_payout = target_payout is None and min_prob is not None
+    heap = []
+    counter = itertools.count()
+    state = {"nodes": 0, "truncated": False, "matches": 0}
+
+    def keep(result):
+        """Retain only the current top_n. Accumulating every match would
+        recreate the memory blow-up this builder exists to replace."""
+        state["matches"] += 1
+        key = result["combined_odds"] if rank_by_payout else result["joint_prob"]
+        entry = (key, next(counter), result)
+        if len(heap) < top_n:
+            heapq.heappush(heap, entry)
+        elif key > heap[0][0]:
+            heapq.heapreplace(heap, entry)
+
+    def descend(start, chosen, odds, prob, size):
+        if state["truncated"]:
+            return
+        if len(chosen) == size:
+            if lo is not None and not (lo <= odds <= hi):
+                return
+            if min_prob is not None and prob < min_prob:
+                return
+            keep({
+                "legs": list(chosen),
+                "combined_odds": odds,
+                "joint_prob": prob,
                 "n_legs": size,
             })
+            return
+        remaining = size - len(chosen)
+        for gi in range(start, n_games - remaining + 1):
+            # Even the best legs left cannot reach the floor; suffix maxima only
+            # shrink as gi advances, so no later game can rescue this branch.
+            if lo is not None and odds * best_from[gi][remaining] < lo:
+                break
+            for leg in games[gi]:
+                state["nodes"] += 1
+                if state["nodes"] > max_nodes:
+                    state["truncated"] = True
+                    return
+                next_odds = odds * leg["decimal_odds"]
+                # Within a game legs are price-ascending, so once one overshoots
+                # the ceiling every later one does too.
+                if hi is not None and next_odds > hi:
+                    break
+                next_prob = prob * leg["market_prob"]
+                # Joint probability only falls as legs are added.
+                if min_prob is not None and next_prob < min_prob:
+                    continue
+                chosen.append(leg)
+                descend(gi + 1, chosen, next_odds, next_prob, size)
+                chosen.pop()
+                if state["truncated"]:
+                    return
+
+    for size in range(min_legs, min(max_legs, n_games) + 1):
+        descend(0, [], 1.0, 1.0, size)
+        if state["truncated"]:
+            break
 
     # Pinning the probability floor means the user asked "how much can I win at
     # this safety level" -> rank by payout. Otherwise rank by safety.
-    if target_payout is None and min_prob is not None:
-        results.sort(key=lambda r: r["combined_odds"], reverse=True)
-    else:
-        results.sort(key=lambda r: r["joint_prob"], reverse=True)
-    return results[:top_n]
+    results = [entry[2] for entry in sorted(heap, key=lambda e: e[0], reverse=True)]
+
+    if stats is not None:
+        stats.update(state)
+        stats["candidate_games"] = n_games
+    return results
