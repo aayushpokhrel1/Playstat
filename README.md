@@ -211,7 +211,7 @@ Everything below is a known, already-diagnosed gap — not a surprise to redisco
 - **It is a features/data problem, not a model-capacity problem** (verified 2026-07-18): making the F5 XGBoost *stronger* (40 trees/d2 → 300/d5 → 600/d7) made R² **worse** (0.0066 → 0.0048 → 0.0031) — a bigger model just fits noise. The current features (team rolling F5 scored/allowed + starter form; and the analogous player rolling features) carry almost no individual-game signal. Improving resolution therefore requires **genuinely new predictive data** (park factors, weather, umpire, lineups, deep pitcher/bullpen stats), not tuning — a real research bet against an efficient market, which may simply not be recoverable.
 - **Decision (user, 2026-07-18): invest in model resolution first.** Do NOT deploy real-money betting or build the betting productization (dashboard edge/parlay surfaces, API contract, chain-swap) on top of the current low-resolution models — that would be infrastructure to display fake edges. **Acceptance gate before anything productizes for betting: a model must demonstrate real per-game *resolution* — `corr`/R² of predicted-vs-actual well above zero and `predicted_mean` tracking the market line with slope → 1 — not merely good calibration/Brier.** The resolution diagnostics used here (regress actual on `predicted_mean`; compare `std(pred)` vs `std(actual)`; slope of `predicted_mean` on the book line) are the permanent gate.
 - **State of the team-market build**: Phases 0–3 of the NRFI+F5 pivot are *built, tested (143 pytest cases), and committed* but **DORMANT** — the code (`modeling/f5.py`, `modeling/team_edges.py`, `optimizer/team_parlay.py`, team-aware `modeling/settle.py`, migration `006_team_markets_f5.sql` applied, `runs_f5` backfilled 3 seasons) is correct plumbing that is *not* in the daily chain and *not* productized. It stays as the substrate to test any resolution improvement against, not as a live betting path. The daily `com.playstat.mlb` chain still runs the player pipeline unchanged (see the OOM caveat below).
-- **Chain caveat**: the player-prop `optimizer.parlay` step OOM-died on 2026-07-18 (SIGKILL) — 1,060 edges>3% → C(1060,3)≈198M combinations, and a 100%-full disk left no swap. The heartbeat correctly alerted; the sentinel was hand-written to stop the catch-up re-run storm. It will recur nightly until the step is capped (e.g. top-N legs by edge before `find_combinations`) or removed. Tied to the productization decision — left for the next session.
+- **Chain caveat**: the player-prop `optimizer.parlay` step OOM-died on 2026-07-18 (SIGKILL) — 1,060 edges>3% → C(1060,3)≈198M combinations, and a 100%-full disk left no swap. The heartbeat correctly alerted; the sentinel was hand-written to stop the catch-up re-run storm. It will recur nightly until the step is capped (e.g. top-N legs by edge before `find_combinations`) or removed. A partial mitigation is already committed (`MAX_CANDIDATE_LEGS = 200` in `optimizer/parlay.py`, bounding the search to `C(200,3)` ≈ 1.3M). **The real fix is designed in §15**: the low-risk parlay builder *replaces* this step outright (capped candidate pool + a 0.55 per-leg probability floor), so the runaway step goes away rather than being patched. Not yet built.
 
 ---
 
@@ -324,3 +324,92 @@ Findings from a targeted research pass (live SGO API probes with our key + web r
 ### Status snapshot (2026-07-15)
 
 Built and live: 3 MLB seasons + 3 NFL seasons ingested; 13 discrete-distribution MLB prop models (v2) + first-inning model; daily 8:30am chain; live odds → 116 edges → 10 parlay recommendations for the 7/17 slate; CLV pipeline armed (first records ~7/18); dashboard with edges/parlays/model-performance pages; API-key auth + dashboard login. First real-money checkpoint: the scheduled Friday 7/17 9:30am parlay review.
+
+---
+
+## 15. Low-Risk Parlay Builder — DESIGNED 2026-07-18, NOT YET BUILT
+
+Full design doc: [`docs/superpowers/specs/2026-07-18-low-risk-parlay-builder-design.md`](docs/superpowers/specs/2026-07-18-low-risk-parlay-builder-design.md). This section is self-contained — a fresh session can go straight from here to `writing-plans` → build without re-brainstorming. **Every decision below is user-confirmed (2026-07-18); do not relitigate them.**
+
+### 15.1 Goal (user reframe, 2026-07-18)
+
+Build a low-risk parlay **BUILDER, not a market-beating model**. Construct a near-double / double (~2x) payout from multiple low-risk legs, mixing MLB **player props** and **team props** (NRFI = 1st-inning runs, F5 = first-5-innings runs). The user explicitly is **NOT** asking to beat the market and accepts it may not be +EV. The job is *the safest construction of a ~2x parlay, surfaced honestly.*
+
+This is the deliberate answer to §11's fundamental finding — the models lack per-game resolution and can't beat these markets, so **the builder does not depend on them**. It is an honest constructor + paper-trading sandbox, not a betting product.
+
+### 15.2 The honesty core (the thing that makes this design correct)
+
+- In a devigged (efficient) market a parlay's true joint probability is roughly **1/payout** no matter how it's built — a 2x parlay is **~48–50% to hit**, a coin flip.
+- Every extra leg adds another **vig bite**, lowering real probability. At a fixed payout, **fewer legs is strictly safer**.
+- "Low risk" and "2x" pull against each other. The builder's whole job is to make that tradeoff **visible** and pick the least-bad point. For genuinely low risk (75%+) the honest target is **~1.3–1.5x**, not 2.0x.
+- Rank on **MARKET-implied (devigged) probability**, never model probability — §11: the models are roughly calibrated but have almost no resolution and **overstate the safety of heavy-favorite legs**, exactly the legs a 2x builder leans on. The book's devigged price is the best-calibrated probability we have.
+
+### 15.3 Decisions (user-confirmed)
+
+| # | Decision | Choice |
+|---|---|---|
+| 1 | Interaction | **Two-axis.** User pins either target payout **or** a minimum joint-probability floor; the builder optimizes/bounds the other. Both always surfaced. |
+| 2 | Build order | **Engine + API first, dashboard second.** Two reviewable stages. |
+| 3 | Same-game legs | **Across-game only in v1** (independent → joint = product). Same-game deferred (§15.9). |
+| 4 | Model's role | **Non-authoritative display context only.** Rank/filter purely on market prob; show `model_prob` labelled "not used for ranking." |
+| 5 | Nightly step | **Builder replaces the OOM-dying `optimizer.parlay` step**; daily chain writes its picks, existing `settle.py` scores them. |
+| 6 | Leg menu | **All markets, favorite-side only, per-leg devigged-prob floor ≥ 0.55** (tunable). Market price decides what's safe — no hardcoded stat blacklist. |
+| 7 | Leg count | **2–4 legs, prefers fewest.** Joint-prob ranking surfaces 2-leg constructions first. |
+
+Nightly defaults: **~1.4x "safe"** and **~2.0x "reach"**, so a paper record builds at both risk levels.
+
+### 15.4 Critical data-layer finding (would silently break the build if missed)
+
+`edges.side` / `edges.implied_prob` hold the side the **model** prefers (chosen by max edge — `modeling/edges.py` L92–95), which may be an *underdog the model likes*. The builder wants the **favorite** side, which is a *market* question.
+
+**So the builder devigs the raw two-sided odds itself** from `prop_lines` / `game_lines` (reusing `modeling.edges.devig()` / `odds_to_probability()`) and picks the favorite. It touches `edges` / `game_edges` **only** to left-join `model_prob` as display context.
+
+> `edges` is model-centric. The builder is market-centric. **Never rank on `edges.implied_prob`.**
+
+### 15.5 Architecture — Approach 1: new unified `optimizer/builder.py`
+
+- **Leg loading**: latest `prop_lines` (13 MLB player-prop stats) + latest `game_lines` (team NRFI + F5), via the same `DISTINCT ON … ORDER BY pulled_at DESC` pattern as `edges.py:latest_prop_lines`. Devig both sides, take the **favorite**, keep only if `market_prob ≥ floor (0.55)`. Skip one-sided lines (~8% of live MLB lines can't be devigged — same guard as `edges.py`). Games not yet `FT`. Player and team legs normalize into **one common schema**: `{game_id, kind: 'player'|'team', label, stat_type|market, side, line_value, american_odds, decimal_odds, market_prob, model_prob (nullable, context)}`.
+- **Search**: across-game combinations of size **2–4**; a combo with two legs sharing a `game_id` is skipped (this exclusion is what makes the independent product valid). Per combo `combined_odds = Π decimal_odds`, `joint_prob = Π market_prob`. Note the existing `find_combinations` ranks on `model_prob` — generalize it to take a probability key or write the search fresh, but **preserve the tested same-game-exclusion behaviour** either way.
+- **Two-axis filter/rank**: pin payout → filter to the band, sort by `joint_prob` desc. Pin probability → filter `joint_prob ≥ floor`, sort by `combined_odds` desc. Both pinned → filter both, sort by `joint_prob` desc. Return top-N.
+- **Combinatorial safety (fixes the nightly OOM)**: cap the candidate pool so `C(N, max_legs)` ≤ ~5M. With `max_legs=4` this needs a tighter `N` than the old max-3 cap of 200 — `C(200,4)` ≈ 64.6M would OOM again. Keep the highest-`market_prob` legs when capping; the 0.55 floor already shrinks the pool a lot.
+- **Persistence**: top-N into `parlay_recommendations` reusing `team_parlay.py`'s JSONB wrapper `{class: 'across_game', legs: [...]}` — but **drop the `ev` field** (no EV claim). Per-leg JSONB carries `market_prob`, odds, side, label, `model_prob`.
+- **Reuse, don't duplicate**: `american_to_decimal`, `devig`/`odds_to_probability`, the same-game exclusion. `optimizer/parlay.py` and `optimizer/team_parlay.py` leave the daily chain but stay in-tree for helpers and as the tested substrate for the same-game v2.
+
+### 15.6 API (stage 1) and dashboard (stage 2)
+
+**API** — new read-only, additive-only endpoint behind the existing API-key dependency:
+
+```
+GET /parlay-builder?target_payout=&min_prob=&max_legs=&floor=&sport=mlb
+→ [{ legs: [{game_id, kind, label, side, line, odds, market_prob, model_prob}],
+      combined_odds, joint_prob, n_legs }]
+```
+
+No `ev` field. Must **not** modify `/edges`, `/parlay-recommendations`, `/game-predictions`, `/box-scores`, `/games` — the Budgerr contract (§7.1) is additive-only.
+
+**Dashboard** — new page in `web/` matching `web/app/edges/` conventions and DESIGN.md (near-black surface, one signal-green accent, Geist Sans/Mono); read PRODUCT.md + DESIGN.md and `web/AGENTS.md` (Next 16 caveats) first. Two controls (target payout, minimum joint probability) — pin either. Each result shows its **joint probability front and centre** ("≈ X% to hit") as the most prominent number on the card; per leg show `market_prob` (authoritative) and `model_prob` (muted, "model — not used for ranking"). Honest framing copy explaining what joint probability means and that ~2x ≈ a coin flip.
+
+### 15.7 Daily chain + paper tracking
+
+In [`scripts/daily_chain.sh`](scripts/daily_chain.sh), replace the `optimizer.parlay` step with `python -m optimizer.builder` at the two default targets (~1.4x, ~2.0x), capped. `modeling.settle` already runs later in the chain and scores the new `parlay_recommendations` rows with **no new settlement code**; the existing dashboard "Betting record (paper)" section then shows the builder's real W-L-P / ROI.
+
+This **retires the step that OOM-died (SIGKILL) nightly** and pushed a false failure alert every morning (§11 chain caveat) — the cap plus the 0.55 floor is the fix, and the runaway step goes away rather than being patched.
+
+### 15.8 Testing + guardrails
+
+Pure-math unit tests following `tests/test_parlay.py` (DB-free, runs under `env -i`, added to CI): favorite-side selection from two-sided odds (**including the case where the model prefers the underdog**), 0.55 floor filtering, the two-axis filter (pin payout / pin probability / both), `joint_prob` and `combined_odds` as exact products, across-game exclusion, the candidate cap actually bounding `C(N, max_legs)`, player+team leg normalization, and the one-sided-line skip.
+
+**Guardrails — do not violate:**
+1. Rank **only** on devigged market probability; never on `model_prob`.
+2. **No "+EV" / "edge" / "value" / "beat the market" claims** in UI, API payloads, or recommendation JSONB.
+3. Always surface joint probability prominently — it *is* the risk.
+4. Favorite-side legs only, `market_prob ≥ floor`.
+5. Across-game only (independent) in v1.
+6. **No real-money deployment.** Honest constructor + paper-trading sandbox.
+
+### 15.9 Future work (deferred, priority order)
+
+1. **Same-game combos** — the user wants these "if possible," explicitly deferred to future work. Start with NRFI+F5 via the empirical lift already built and tested in `modeling/correlation.py` + `optimizer/team_parlay.py:same_game_pairs`, surfaced as a separate labelled class showing its **sample size**. Then player+team and player+player same-game correlation (§14.2 — copulas over discrete marginals are non-unique; opus-grade, don't front-load). Only trustworthy with ~a season of shared history.
+2. **Improve model resolution** — user explicitly wants this kept on the radar. The builder avoids depending on the models, but improving them would let `model_prob` graduate from context to a real filter. Per §11 this needs *genuinely new predictive data* (park factors, weather, umpire, lineups, deep pitcher/bullpen stats), **not tuning** — making the model stronger made R² *worse*. Gated by §11's permanent acceptance test: `corr`/R² of predicted-vs-actual well above zero **and** `predicted_mean` tracking the book line with slope → 1.
+3. **Line shopping / best-price legs** (§14.2) — the builder ranks on consensus devigged prob, but SGO already returns a `byBookmaker` breakdown that `odds_ingest.py` discards. Best available price per leg strictly improves payout at fixed risk: cheapest real improvement, zero modeling, zero extra quota.
+4. **Kelly stake sizing** (§14.2) — ¼-Kelly per parlay-as-one-bet plus a same-night total-exposure cap.
