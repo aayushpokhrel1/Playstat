@@ -28,6 +28,7 @@ from api.schemas import (
     TeamOut,
 )
 from ingestion.db import get_engine
+from modeling import settle
 from modeling.distributions import pmf_list, prob_over
 from modeling.train import model_version, stat_family
 from optimizer import builder, builder_core
@@ -531,49 +532,43 @@ def clv_summary():
 @app.get("/bet-performance", response_model=list[BetPerformanceOut])
 def bet_performance():
     """Paper-trading ledger aggregate (README §14.1, modeling/settle.py) — the
-    honest record of whether recommended parlays/edges would have won. One
-    row per bet_type ('parlay', 'edge') plus an 'all' row combining both.
+    honest record of whether recommended parlays/edges would have won.
+
+    Parlay rows are broken out by their source parlay_recommendations.kind so
+    the builder's paper record (README §15) doesn't pool with the legacy
+    model-ranked parlays: 'parlay_model' (kind='player'), 'parlay_team'
+    (kind='team'), 'parlay_builder' (kind='builder'), plus 'edge' and a
+    combined 'all' row. The recommendation_outcomes.bet_type column itself
+    stays 'parlay' for every parlay row — the DB CHECK constraint requires
+    it — the split happens here via a LEFT JOIN onto
+    parlay_recommendations.kind, not in the schema.
     """
     with engine.begin() as conn:
         rows = conn.execute(
             text(
                 """
-                SELECT bet_type,
+                SELECT ro.bet_type, pr.kind,
                        COUNT(*) AS n,
-                       SUM((result = 'win')::int) AS wins,
-                       SUM((result = 'loss')::int) AS losses,
-                       SUM((result = 'push')::int) AS pushes,
-                       SUM(stake) AS total_staked,
-                       SUM(pnl) AS total_pnl
-                FROM recommendation_outcomes
-                GROUP BY bet_type
-                ORDER BY bet_type
+                       SUM((ro.result = 'win')::int) AS wins,
+                       SUM((ro.result = 'loss')::int) AS losses,
+                       SUM((ro.result = 'push')::int) AS pushes,
+                       SUM(ro.stake) AS total_staked,
+                       SUM(ro.pnl) AS total_pnl
+                FROM recommendation_outcomes ro
+                LEFT JOIN parlay_recommendations pr ON pr.parlay_id = ro.parlay_id
+                GROUP BY ro.bet_type, pr.kind
                 """
             )
         ).fetchall()
 
-    def _row(bet_type, n, wins, losses, pushes, staked, pnl):
-        staked, pnl = float(staked or 0), float(pnl or 0)
-        return BetPerformanceOut(
-            bet_type=bet_type, n=n, wins=wins, losses=losses, pushes=pushes,
+    return [
+        BetPerformanceOut(
+            bet_type=label, n=n, wins=wins, losses=losses, pushes=pushes,
             total_staked=staked, total_pnl=pnl,
             roi=(pnl / staked if staked else 0.0),
         )
-
-    results = [_row(*r) for r in rows]
-    if rows:
-        results.append(
-            _row(
-                "all",
-                sum(r[1] for r in rows),
-                sum(r[2] for r in rows),
-                sum(r[3] for r in rows),
-                sum(r[4] for r in rows),
-                sum(float(r[5] or 0) for r in rows),
-                sum(float(r[6] or 0) for r in rows),
-            )
-        )
-    return results
+        for label, n, wins, losses, pushes, staked, pnl in settle.aggregate_bet_performance(rows)
+    ]
 
 
 @app.get("/backtest-history", response_model=list[BacktestRunOut])

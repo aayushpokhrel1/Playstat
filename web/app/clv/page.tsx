@@ -23,6 +23,9 @@ function formatUnits(value: number): string {
 
 const BET_TYPE_LABEL: Record<string, string> = {
   parlay: "Parlay",
+  parlay_model: "Parlays (model)",
+  parlay_team: "Parlays (team)",
+  parlay_builder: "Parlays (builder)",
   edge: "Edge",
   all: "All",
 };
