@@ -33,3 +33,14 @@ def test_mixed_parlay_one_miss_loses():
     result, _, pnl = parlay_result(results, [1.5, 1.4])
     assert result == "loss"
     assert pnl == pytest.approx(-1.0)
+
+
+def test_as_legs_list_passes_through_parsed_jsonb():
+    """psycopg2 returns JSONB already parsed. The team/builder wrapper arrives as
+    a dict, which json.loads cannot take — this crashed settlement the first time
+    real builder rows existed (2026-07-21)."""
+    from modeling.settle import _as_legs_list
+    wrapper = {"class": "across_game", "legs": [{"kind": "player"}]}
+    assert _as_legs_list(wrapper) is wrapper
+    assert _as_legs_list([{"kind": "team"}]) == [{"kind": "team"}]
+    assert _as_legs_list('[{"kind": "player"}]') == [{"kind": "player"}]

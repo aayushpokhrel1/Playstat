@@ -25,6 +25,18 @@ def passes_floor(leg, floor=DEFAULT_FLOOR):
     return leg["market_prob"] >= floor
 
 
+def _clean_optional(value):
+    """None for missing/NaN. model_prob comes from a LEFT JOIN, so it is absent
+    whenever no edges row exists — and pandas represents that as NaN in a float
+    column, not None. Left alone, json.dumps writes a bare NaN, which is invalid
+    JSON and PostgreSQL rejects it (caught 2026-07-21: it broke every --save).
+    NaN is the only value not equal to itself, so this needs no pandas import.
+    """
+    if value is None or value != value:
+        return None
+    return float(value)
+
+
 def _base_leg(game_id, side, market_prob, line_value, american_odds, model_prob, label):
     return {
         "game_id": int(game_id),
@@ -34,7 +46,7 @@ def _base_leg(game_id, side, market_prob, line_value, american_odds, model_prob,
         "american_odds": int(american_odds),
         "decimal_odds": american_to_decimal(int(american_odds)),
         "market_prob": float(market_prob),
-        "model_prob": None if model_prob is None else float(model_prob),
+        "model_prob": _clean_optional(model_prob),
     }
 
 

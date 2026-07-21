@@ -87,7 +87,14 @@ def _as_legs_list(raw):
     raw string depending on driver path — same defensive pattern as
     api/main.py's parlay-recommendations handler.
     """
-    return raw if isinstance(raw, list) else json.loads(raw)
+    # dict covers the {"class", "legs": [...]} wrapper the team and builder
+    # paths write: psycopg2 hands JSONB back already parsed, so json.loads would
+    # be called on a dict and raise TypeError. Caught 2026-07-21, the first time
+    # real builder rows existed — the team path shares this shape and would have
+    # hit it too the moment it went live.
+    if isinstance(raw, (list, dict)):
+        return raw
+    return json.loads(raw)
 
 
 def _rec_snapshot(snaps, created_at):

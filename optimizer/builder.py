@@ -116,7 +116,10 @@ def save_builds(engine, target_payout, results):
                 ),
                 {
                     "tp": target_payout,
-                    "legs": json.dumps({"class": "across_game", "legs": legs_json}),
+                    # allow_nan=False: emit a loud Python error rather than bare
+                    # NaN, which is invalid JSON and Postgres rejects downstream.
+                    "legs": json.dumps({"class": "across_game", "legs": legs_json},
+                                       allow_nan=False),
                     "jp": r["joint_prob"],
                     "co": r["combined_odds"],
                 },

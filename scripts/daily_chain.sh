@@ -91,8 +91,18 @@ run_chain() {
 		"$PY" -m modeling.first_inning --days 2 &&
 		"$PY" -m modeling.edges &&
 		"$PY" -m modeling.backtest --sport mlb &&
-		"$PY" -m optimizer.parlay --target-payout 2.0 --max-legs 3
+		"$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
+		"$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save
 }
+# The old `optimizer.parlay --target-payout 2.0 --max-legs 3` step lived here and
+# OOM-died (SIGKILL) nightly — 1,060 edges > 3% meant C(1060,3) ~ 198M combinations
+# (README §11). It is replaced, not patched, by optimizer.builder: a bounded,
+# game-structured search that ranks on de-vigged MARKET probability rather than
+# model probability. Two targets are recorded each night so the paper ledger
+# accumulates at both risk levels — ~1.4x "safe" and ~2.0x "reach" (README §15.3).
+# Tolerance is tightened to 0.10 (default 0.15) because ranking by joint
+# probability always returns the least-risky end of the band, so a wide band
+# records a bet well below its nominal target (README §15.10).
 
 if run_chain; then
 	echo "$today" >"$STATE"

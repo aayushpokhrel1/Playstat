@@ -71,6 +71,21 @@ def test_normalize_team_leg_shape():
     assert leg["model_prob"] is None
 
 
+def test_normalize_coerces_nan_model_prob_to_none():
+    """Regression: model_prob arrives as NaN from the LEFT JOIN when no edges row
+    exists. Left as NaN, json.dumps emits bare NaN and Postgres rejects the
+    insert — this broke every --save until 2026-07-21."""
+    import json
+    leg = normalize_player_leg({
+        "player_id": 1, "game_id": 2, "stat_type": "hits",
+        "line_value": 0.5, "over_odds": -300, "under_odds": 240,
+        "player_name": "X", "model_prob": float("nan"),
+    })
+    assert leg["model_prob"] is None
+    # Must survive strict JSON encoding, which is what the DB write does.
+    json.dumps(leg, allow_nan=False)
+
+
 def test_normalize_player_leg_keeps_model_prob_optional():
     leg = normalize_player_leg({
         "player_id": 1, "game_id": 2, "stat_type": "hits",
