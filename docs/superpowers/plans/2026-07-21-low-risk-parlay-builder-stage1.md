@@ -662,9 +662,12 @@ def test_builder_leg_key_rejects_unknown_kind():
         builder_leg_key({"kind": "spaceship", "game_id": 1})
 
 
+# NOTE: settle_leg() returns "hit"/"miss"/"push" (per-leg).
+# "win"/"loss" is what parlay_result() returns for the parlay as a whole.
+# An earlier draft of this plan conflated the two — corrected 2026-07-21.
 def test_mixed_parlay_all_hit_wins():
     results = [settle_leg("over", 2.0, 1.5), settle_leg("under", 0.0, 0.5)]
-    assert results == ["win", "win"]
+    assert results == ["hit", "hit"]
     result, odds, pnl = parlay_result(results, [1.5, 1.4])
     assert result == "win"
     assert odds == pytest.approx(2.1)
@@ -673,7 +676,7 @@ def test_mixed_parlay_all_hit_wins():
 
 def test_mixed_parlay_one_miss_loses():
     results = [settle_leg("over", 2.0, 1.5), settle_leg("under", 3.0, 0.5)]
-    assert results == ["win", "loss"]
+    assert results == ["hit", "miss"]
     result, _, pnl = parlay_result(results, [1.5, 1.4])
     assert result == "loss"
     assert pnl == pytest.approx(-1.0)
