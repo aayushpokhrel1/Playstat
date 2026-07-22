@@ -51,7 +51,7 @@ export default function BuilderControls({ initial }: { initial: SavedBuilderParl
   return (
     <div>
       <div className={styles.controls}>
-        <div className={styles.modeToggle} role="radiogroup" aria-label="Search mode">
+        <div className={styles.modeToggle} role="group" aria-label="Search mode">
           <button
             type="button"
             className={mode === "payout" ? styles.modeButtonActive : styles.modeButton}

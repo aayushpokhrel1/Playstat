@@ -102,7 +102,7 @@
 .recordFigure {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 0.9375rem;
   color: var(--ink);
 }
@@ -178,7 +178,7 @@
 .modeButtonActive {
   background: transparent;
   color: var(--ink);
-  border: 1px solid var(--signal-green);
+  border: 1px solid var(--ink);
 }
 
 .controlsRow {
