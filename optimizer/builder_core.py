@@ -113,11 +113,9 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
     Pin min_prob      -> rank by payout (biggest payout at that safety level).
 
     target_payout is a FLOOR, not the centre of a tolerance band (user-confirmed
-    2026-07-21). Joint probability falls monotonically as payout rises, so
-    ranking-by-joint-prob inside a symmetric band always returns the bottom of
-    the band — the band's lower edge was silently the real target. Making the
-    two axes exact duals (min_prob -> filter by prob, rank by odds; target_payout
-    -> filter by odds, rank by prob) removes that confusion.
+    2026-07-21). Making the two axes exact duals (min_prob -> filter by prob,
+    rank by odds; target_payout -> filter by odds, rank by prob) removes the
+    "band centre vs. floor" confusion.
 
     Legs from the same game are never combined: the joint probability is a plain
     product, which is only valid for independent (different-game) legs. That
@@ -126,12 +124,27 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
     place. Enumerating flat leg tuples instead would generate billions of
     same-game combinations only to discard them.
 
-    Pruning is exact, not heuristic: decimal odds are all >= 1, so a partial
-    product only grows, and any branch already past the internal search
-    ceiling is dead. Legs within a game are ordered by price so that test can
-    stop a whole run — this is a primary performance lever (see the
-    progressive-widening comment below for why removing the ceiling outright
-    is not the fix).
+    Search is a SINGLE unbounded pass (no odds ceiling), bounded by an EXACT
+    heap-aware prune. It is provably identical to a pure global brute force on
+    EVERY slate — no assumption about odds/probability correlation. (An earlier
+    progressive-widening early-stop was exact only when higher payout implied
+    strictly lower joint_prob, which holds on uniform-vig book lines but not in
+    general; it missed ~0.5% of optima on wide-vig synthetic slates.)
+
+    The heap-aware prune discards only subtrees that provably cannot enter the
+    top_n once the heap is full (holds top_n entries):
+    - joint_prob axis (target_payout pinned): decimal odds are all >= 1, so
+      joint_prob only FALLS as legs are added. A partial branch's running prob
+      is therefore an upper bound on any completion's joint_prob; if that bound
+      <= the current N-th best joint_prob, the whole subtree is dead.
+    - combined_odds axis (min_prob pinned): a partial branch's maximum reachable
+      payout is odds * best_from[gi][remaining] (the exact suffix-maximum). As gi
+      advances best_from only shrinks, so once that maximum <= the current N-th
+      best odds, no later game can beat it either.
+
+    tolerance is retained for API/CLI/daily_chain compatibility but no longer
+    affects results — the search is exact and unbounded, so there is no band to
+    widen. It is accepted and ignored.
     """
     if not legs:
         return []
@@ -160,104 +173,101 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
             prefix.append(prefix[-1] * value)
         best_from.append(prefix)
 
+    # best_prob_from[gi][r] = the largest joint probability obtainable by taking
+    # r legs from games[gi:] (product of the r largest per-game max market_probs
+    # in the suffix). The exact probability dual of best_from: any completion of
+    # a branch drawing `remaining` legs from games[gi:] has joint_prob at most
+    # prob * best_prob_from[gi][remaining]. If that upper bound falls below the
+    # min_prob floor the whole branch is dead — and since the suffix maximum only
+    # shrinks as gi advances, no later game can rescue it either. This look-ahead
+    # is what keeps the min_prob axis exhaustive: the per-step floor check alone
+    # still explores branches that provably can never reach the floor.
+    game_prob_max = [max(leg["market_prob"] for leg in gl) for gl in games]
+    best_prob_from = []
+    for gi in range(n_games + 1):
+        prefix = [1.0]
+        for value in sorted(game_prob_max[gi:], reverse=True):
+            prefix.append(prefix[-1] * value)
+        best_prob_from.append(prefix)
+
     rank_by_payout = target_payout is None and min_prob is not None
 
-    # Progressive widening (the fix for the "floor, not band centre" bug).
-    #
-    # Naively dropping the internal ceiling (hi=None) would delete the
-    # `next_odds > hi: break` prune in descend(), which is a primary
-    # performance lever — legs within a game are sorted price-ascending
-    # precisely so that prune can kill a whole run. Losing it explodes the
-    # search space and makes max_nodes truncate far sooner.
-    #
-    # Instead: when ranking by joint_prob subject to combined_odds >= lo, the
-    # optimum is always the qualifying construction with the LOWEST payout
-    # (decimal odds are all >= 1, so more/pricier legs only ever shrink joint
-    # probability further). That means an internal search ceiling can never
-    # exclude the optimum as long as at least one qualifying construction
-    # exists below it. So: search with a narrow ceiling first; only widen if
-    # that pass finds nothing at all. Widening only ever *adds* candidates
-    # with strictly higher payout, and higher payout means strictly lower
-    # joint probability, so a later, wider pass can never displace a result
-    # an earlier, narrower pass already found. Stopping at the first
-    # non-empty pass is therefore exact, not a heuristic.
-    if target_payout is not None:
-        ceilings = [target_payout * (1 + tolerance), target_payout * 1.5,
-                    target_payout * 3.0, None]
-    else:
-        ceilings = [None]
-
+    # A single unbounded pass (no odds ceiling), bounded by an exact heap-aware
+    # prune. See the docstring for the two upper-bound arguments that make the
+    # prune lossless; nothing here depends on odds/probability correlation.
     heap = []
+    counter = itertools.count()
     state = {"nodes": 0, "truncated": False, "matches": 0}
 
-    for hi in ceilings:
-        heap = []
-        counter = itertools.count()
-        state = {"nodes": 0, "truncated": False, "matches": 0}
+    def keep(result):
+        """Retain only the current top_n. Accumulating every match would
+        recreate the memory blow-up this builder exists to replace."""
+        state["matches"] += 1
+        key = result["combined_odds"] if rank_by_payout else result["joint_prob"]
+        entry = (key, next(counter), result)
+        if len(heap) < top_n:
+            heapq.heappush(heap, entry)
+        elif key > heap[0][0]:
+            heapq.heapreplace(heap, entry)
 
-        def keep(result):
-            """Retain only the current top_n. Accumulating every match would
-            recreate the memory blow-up this builder exists to replace."""
-            state["matches"] += 1
-            key = result["combined_odds"] if rank_by_payout else result["joint_prob"]
-            entry = (key, next(counter), result)
-            if len(heap) < top_n:
-                heapq.heappush(heap, entry)
-            elif key > heap[0][0]:
-                heapq.heapreplace(heap, entry)
-
-        def descend(start, chosen, odds, prob, size):
-            if state["truncated"]:
+    def descend(start, chosen, odds, prob, size):
+        if state["truncated"]:
+            return
+        # Heap-aware prune (exact), joint_prob axis: joint_prob only falls as
+        # legs are added, so the running prob is an upper bound on any
+        # completion's joint_prob. Once the heap holds top_n, a branch that
+        # cannot strictly beat the current N-th best is dead.
+        if not rank_by_payout and len(heap) == top_n and prob <= heap[0][0]:
+            return
+        if len(chosen) == size:
+            if lo is not None and odds < lo:
                 return
-            if len(chosen) == size:
-                if lo is not None and odds < lo:
-                    return
-                if hi is not None and odds > hi:
-                    return
-                if min_prob is not None and prob < min_prob:
-                    return
-                keep({
-                    "legs": list(chosen),
-                    "combined_odds": odds,
-                    "joint_prob": prob,
-                    "n_legs": size,
-                })
+            if min_prob is not None and prob < min_prob:
                 return
-            remaining = size - len(chosen)
-            for gi in range(start, n_games - remaining + 1):
-                # Even the best legs left cannot reach the floor; suffix maxima only
-                # shrink as gi advances, so no later game can rescue this branch.
-                if lo is not None and odds * best_from[gi][remaining] < lo:
-                    break
-                for leg in games[gi]:
-                    state["nodes"] += 1
-                    if state["nodes"] > max_nodes:
-                        state["truncated"] = True
-                        return
-                    next_odds = odds * leg["decimal_odds"]
-                    # Within a game legs are price-ascending, so once one overshoots
-                    # this pass's ceiling every later one does too.
-                    if hi is not None and next_odds > hi:
-                        break
-                    next_prob = prob * leg["market_prob"]
-                    # Joint probability only falls as legs are added.
-                    if min_prob is not None and next_prob < min_prob:
-                        continue
-                    chosen.append(leg)
-                    descend(gi + 1, chosen, next_odds, next_prob, size)
-                    chosen.pop()
-                    if state["truncated"]:
-                        return
-
-        for size in range(min_legs, min(max_legs, n_games) + 1):
-            descend(0, [], 1.0, 1.0, size)
-            if state["truncated"]:
+            keep({
+                "legs": list(chosen),
+                "combined_odds": odds,
+                "joint_prob": prob,
+                "n_legs": size,
+            })
+            return
+        remaining = size - len(chosen)
+        for gi in range(start, n_games - remaining + 1):
+            # Even the best legs left cannot reach the floor; suffix maxima only
+            # shrink as gi advances, so no later game can rescue this branch.
+            if lo is not None and odds * best_from[gi][remaining] < lo:
                 break
+            # Probability dual: the best joint_prob reachable from here is
+            # prob * best_prob_from[gi][remaining] (exact suffix maximum). If that
+            # can't clear the min_prob floor, no completion qualifies, and the
+            # suffix max only shrinks as gi advances -> the whole tail is dead.
+            if min_prob is not None and prob * best_prob_from[gi][remaining] < min_prob:
+                break
+            # Heap-aware prune (exact), combined_odds axis: max reachable payout
+            # from here is odds * best_from[gi][remaining]; best_from shrinks as
+            # gi advances, so once it can't beat the N-th best odds, no later
+            # game can either.
+            if rank_by_payout and len(heap) == top_n and odds * best_from[gi][remaining] <= heap[0][0]:
+                break
+            for leg in games[gi]:
+                state["nodes"] += 1
+                if state["nodes"] > max_nodes:
+                    state["truncated"] = True
+                    return
+                next_odds = odds * leg["decimal_odds"]
+                next_prob = prob * leg["market_prob"]
+                # Joint probability only falls as legs are added.
+                if min_prob is not None and next_prob < min_prob:
+                    continue
+                chosen.append(leg)
+                descend(gi + 1, chosen, next_odds, next_prob, size)
+                chosen.pop()
+                if state["truncated"]:
+                    return
 
-        # Stop at the first pass that finds anything (see the widening
-        # comment above for why this is exact) — or once hi is None, since
-        # that is the unbounded last resort and there is nowhere left to widen.
-        if state["matches"] > 0 or hi is None:
+    for size in range(min_legs, min(max_legs, n_games) + 1):
+        descend(0, [], 1.0, 1.0, size)
+        if state["truncated"]:
             break
 
     # Pinning the probability floor means the user asked "how much can I win at

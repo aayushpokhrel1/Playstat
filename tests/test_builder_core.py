@@ -253,11 +253,18 @@ def test_build_prefers_fewest_legs_at_a_given_payout():
 
 
 def test_build_respects_node_budget_and_reports_truncation():
-    legs = [_leg(i, 0.9, 1.1) for i in range(1, 60)]
+    # This scenario deliberately DEFEATS the heap-aware prune so the MAX_NODES
+    # guard is what stops the search. top_n is set absurdly high: the heap can
+    # never accumulate top_n entries within the 500-node budget, so the
+    # heap-full precondition of the prune never holds and no subtree is ever
+    # short-circuited. (Distinct odds also keep the top-N boundary tie-free.)
+    # Contrast the common case, where a full heap lets the prune finish early
+    # well under budget — there the guard is never reached.
+    legs = [_leg(i, 0.9, 1.1 + i * 0.001) for i in range(1, 60)]
     stats = {}
-    build(legs, min_prob=0.0, max_legs=4, max_nodes=500, stats=stats)
+    build(legs, min_prob=0.0, max_legs=4, max_nodes=500, top_n=100000, stats=stats)
     assert stats["truncated"] is True
-    assert stats["nodes"] <= 501
+    assert stats["nodes"] <= 500 + 1
 
 
 def test_build_stats_reports_candidate_games():

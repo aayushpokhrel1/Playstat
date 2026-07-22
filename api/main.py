@@ -13,6 +13,7 @@ from api.schemas import (
     BoxScoreOut,
     BuilderLegOut,
     BuilderParlayOut,
+    BuilderSearchOut,
     ClvSummaryOut,
     EdgeDistributionOut,
     EdgeOut,
@@ -25,6 +26,7 @@ from api.schemas import (
     PlayerOut,
     PmfPoint,
     PredictionOut,
+    SavedBuilderParlayOut,
     TeamOut,
 )
 from ingestion.db import get_engine
@@ -479,7 +481,7 @@ def list_parlay_recommendations(limit: int = 10):
     return results
 
 
-@app.get("/parlay-builder", response_model=list[BuilderParlayOut])
+@app.get("/parlay-builder", response_model=BuilderSearchOut)
 def parlay_builder(
     target_payout: float | None = None,
     min_prob: float | None = None,
@@ -490,6 +492,10 @@ def parlay_builder(
     top_n: int = 10,
 ):
     """Low-risk parlay constructions ranked by de-vigged MARKET probability.
+
+    Returns an object `{constructions, truncated, nodes_searched, exhaustive}` —
+    truncated/exhaustive report whether the search hit its node budget and
+    returned partial results.
 
     Pin target_payout and/or min_prob. joint_prob is the honest probability the
     whole parlay hits. No edge or expected-value claim is made or returned.
@@ -513,12 +519,13 @@ def parlay_builder(
 
     legs = builder.load_legs(engine, floor)
     if not legs:
-        return []
+        return BuilderSearchOut(constructions=[], truncated=False, nodes_searched=0, exhaustive=True)
+    stats: dict = {}
     results = builder_core.build(
         legs, target_payout=target_payout, tolerance=tolerance, min_prob=min_prob,
-        min_legs=min_legs, max_legs=max_legs, top_n=top_n,
+        min_legs=min_legs, max_legs=max_legs, top_n=top_n, stats=stats,
     )
-    return [
+    constructions = [
         BuilderParlayOut(
             legs=[
                 BuilderLegOut(
@@ -534,6 +541,56 @@ def parlay_builder(
         )
         for r in results
     ]
+    truncated = bool(stats.get("truncated", False))
+    return BuilderSearchOut(
+        constructions=constructions, truncated=truncated,
+        nodes_searched=int(stats.get("nodes", 0)), exhaustive=not truncated,
+    )
+
+
+@app.get("/parlay-builder/saved", response_model=list[SavedBuilderParlayOut])
+def saved_builder_parlays(limit: int = 10):
+    """The precomputed nightly low-risk builder parlays (kind='builder'), newest
+    first. A fast list read (no live search) — this is the endpoint external
+    consumers (Budgerr) should use, NOT the live /parlay-builder, which can take
+    4-13s. Team legs (NRFI/F5) carry no team identity in `label`: they are
+    game-level markets, so resolve the matchup via each leg's game_id -> /games.
+    Ranked on de-vigged market probability; model_prob is context only.
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
+                FROM parlay_recommendations
+                WHERE kind = 'builder'
+                ORDER BY created_at DESC, joint_prob DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).fetchall()
+
+    out = []
+    for r in rows:
+        legs_raw = _as_legs_list(r[5])
+        out.append(
+            SavedBuilderParlayOut(
+                parlay_id=r[0], created_at=str(r[1]), target_payout=float(r[2]),
+                joint_prob=float(r[3]), combined_odds=float(r[4]), n_legs=len(legs_raw),
+                legs=[
+                    BuilderLegOut(
+                        game_id=leg["game_id"], kind=leg["kind"], label=leg["label"],
+                        player_id=leg.get("player_id"), stat_type=leg.get("stat_type"),
+                        market=leg.get("market"), side=leg["side"], line=leg["line"],
+                        odds=leg["odds"], market_prob=leg["market_prob"],
+                        model_prob=leg.get("model_prob"),
+                    )
+                    for leg in legs_raw
+                ],
+            )
+        )
+    return out
 
 
 @app.get("/clv-summary", response_model=list[ClvSummaryOut])
