@@ -129,6 +129,13 @@ Built as a FastAPI backend (`api/`) + Next.js web dashboard (`web/`) — the "we
 
 **Auth**: when `AUTH_ENABLED=true` on the API, every endpoint requires an `X-API-Key` header matching one of the keys in `PLAYSTAT_API_KEYS` (comma-separated `name:key` pairs — Budgerr gets its own named key, e.g. `budgerr:<key>`, so it can be revoked independently of the dashboard's). CORS already allows the header (`allow_headers=["*"]`), so preflighted browser requests work. Budgerr has two options for supplying it: (a) embed the key in its browser frontend — acceptable for strictly personal/local use, but the key is visible to anyone who can open devtools; or (b) **recommended**: proxy Playstat calls through Budgerr's own backend, which attaches the key server-side and keeps it out of the browser entirely.
 
+**`GET /parlay-builder/saved`** is also a Budgerr-facing contract surface (added
+2026-07-21, Stage 2). It lists the precomputed nightly low-risk builder parlays
+(`kind='builder'`) as a fast read, so Budgerr never has to call the slow live
+`/parlay-builder` search on a user's critical path. Additive-only, like the
+endpoints above. Its team legs (NRFI/F5) are game-level markets with no team in
+`label` — resolve the matchup via `game_id` → `/games`.
+
 ---
 
 ## 8. Build Order — status

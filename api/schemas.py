@@ -206,3 +206,9 @@ class BuilderSearchOut(BaseModel):
     truncated: bool
     nodes_searched: int
     exhaustive: bool
+
+
+class SavedBuilderParlayOut(BuilderParlayOut):
+    parlay_id: int
+    created_at: str
+    target_payout: float

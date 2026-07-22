@@ -26,6 +26,7 @@ from api.schemas import (
     PlayerOut,
     PmfPoint,
     PredictionOut,
+    SavedBuilderParlayOut,
     TeamOut,
 )
 from ingestion.db import get_engine
@@ -545,6 +546,51 @@ def parlay_builder(
         constructions=constructions, truncated=truncated,
         nodes_searched=int(stats.get("nodes", 0)), exhaustive=not truncated,
     )
+
+
+@app.get("/parlay-builder/saved", response_model=list[SavedBuilderParlayOut])
+def saved_builder_parlays(limit: int = 10):
+    """The precomputed nightly low-risk builder parlays (kind='builder'), newest
+    first. A fast list read (no live search) — this is the endpoint external
+    consumers (Budgerr) should use, NOT the live /parlay-builder, which can take
+    4-13s. Team legs (NRFI/F5) carry no team identity in `label`: they are
+    game-level markets, so resolve the matchup via each leg's game_id -> /games.
+    Ranked on de-vigged market probability; model_prob is context only.
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
+                FROM parlay_recommendations
+                WHERE kind = 'builder'
+                ORDER BY created_at DESC, joint_prob DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).fetchall()
+
+    out = []
+    for r in rows:
+        legs_raw = _as_legs_list(r[5])
+        out.append(
+            SavedBuilderParlayOut(
+                parlay_id=r[0], created_at=str(r[1]), target_payout=float(r[2]),
+                joint_prob=float(r[3]), combined_odds=float(r[4]), n_legs=len(legs_raw),
+                legs=[
+                    BuilderLegOut(
+                        game_id=leg["game_id"], kind=leg["kind"], label=leg["label"],
+                        player_id=leg.get("player_id"), stat_type=leg.get("stat_type"),
+                        market=leg.get("market"), side=leg["side"], line=leg["line"],
+                        odds=leg["odds"], market_prob=leg["market_prob"],
+                        model_prob=leg.get("model_prob"),
+                    )
+                    for leg in legs_raw
+                ],
+            )
+        )
+    return out
 
 
 @app.get("/clv-summary", response_model=list[ClvSummaryOut])
