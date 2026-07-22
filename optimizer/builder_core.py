@@ -173,6 +173,23 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
             prefix.append(prefix[-1] * value)
         best_from.append(prefix)
 
+    # best_prob_from[gi][r] = the largest joint probability obtainable by taking
+    # r legs from games[gi:] (product of the r largest per-game max market_probs
+    # in the suffix). The exact probability dual of best_from: any completion of
+    # a branch drawing `remaining` legs from games[gi:] has joint_prob at most
+    # prob * best_prob_from[gi][remaining]. If that upper bound falls below the
+    # min_prob floor the whole branch is dead — and since the suffix maximum only
+    # shrinks as gi advances, no later game can rescue it either. This look-ahead
+    # is what keeps the min_prob axis exhaustive: the per-step floor check alone
+    # still explores branches that provably can never reach the floor.
+    game_prob_max = [max(leg["market_prob"] for leg in gl) for gl in games]
+    best_prob_from = []
+    for gi in range(n_games + 1):
+        prefix = [1.0]
+        for value in sorted(game_prob_max[gi:], reverse=True):
+            prefix.append(prefix[-1] * value)
+        best_prob_from.append(prefix)
+
     rank_by_payout = target_payout is None and min_prob is not None
 
     # A single unbounded pass (no odds ceiling), bounded by an exact heap-aware
@@ -219,6 +236,12 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
             # Even the best legs left cannot reach the floor; suffix maxima only
             # shrink as gi advances, so no later game can rescue this branch.
             if lo is not None and odds * best_from[gi][remaining] < lo:
+                break
+            # Probability dual: the best joint_prob reachable from here is
+            # prob * best_prob_from[gi][remaining] (exact suffix maximum). If that
+            # can't clear the min_prob floor, no completion qualifies, and the
+            # suffix max only shrinks as gi advances -> the whole tail is dead.
+            if min_prob is not None and prob * best_prob_from[gi][remaining] < min_prob:
                 break
             # Heap-aware prune (exact), combined_odds axis: max reachable payout
             # from here is odds * best_from[gi][remaining]; best_from shrinks as
