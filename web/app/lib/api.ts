@@ -100,6 +100,46 @@ export type BetPerformance = {
   roi: number;
 };
 
+export type BuilderLeg = {
+  game_id: number;
+  kind: "player" | "team";
+  label: string;
+  player_id: number | null;
+  stat_type: string | null;
+  market: string | null;
+  side: "over" | "under";
+  line: number;
+  odds: number;
+  market_prob: number;
+  model_prob: number | null;
+};
+
+export type BuilderConstruction = {
+  legs: BuilderLeg[];
+  combined_odds: number;
+  joint_prob: number;
+  n_legs: number;
+};
+
+export type BuilderSearchResult = {
+  constructions: BuilderConstruction[];
+  truncated: boolean;
+  nodes_searched: number;
+  exhaustive: boolean;
+};
+
+export type SavedBuilderParlay = BuilderConstruction & {
+  parlay_id: number;
+  created_at: string;
+  target_payout: number;
+};
+
+export type BuilderSearchParams = {
+  target_payout?: number;
+  min_prob?: number;
+  max_legs?: number;
+};
+
 // Server-only: apiGet is called exclusively from server components, so the
 // key never reaches the browser.
 function apiHeaders(): HeadersInit | undefined {
@@ -163,4 +203,16 @@ export function getClvSummary() {
 
 export function getBetPerformance() {
   return apiGet<BetPerformance[]>("/bet-performance");
+}
+
+export function getSavedBuilderParlays(limit = 10) {
+  return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}`);
+}
+
+export function searchBuilder(params: BuilderSearchParams) {
+  const q = new URLSearchParams();
+  if (params.target_payout != null) q.set("target_payout", String(params.target_payout));
+  if (params.min_prob != null) q.set("min_prob", String(params.min_prob));
+  if (params.max_legs != null) q.set("max_legs", String(params.max_legs));
+  return apiGet<BuilderSearchResult>(`/parlay-builder?${q.toString()}`);
 }
