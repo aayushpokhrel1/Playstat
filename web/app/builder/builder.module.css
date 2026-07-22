@@ -133,6 +133,146 @@
   font-weight: 500;
 }
 
+/* Controls */
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.modeToggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.modeButton,
+.modeButtonActive {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: border-color 120ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modeButton {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.modeButton:hover {
+  color: var(--ink);
+}
+
+.modeButtonActive {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--signal-green);
+}
+
+.controlsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-md);
+}
+
+.controlField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.controlLabel {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.controlInput {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  width: 8ch;
+}
+
+.controlInput:focus {
+  outline: none;
+  border-color: var(--signal-green);
+}
+
+.controlDerived {
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding-bottom: 8px;
+}
+
+.buildButton {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink-black);
+  background: var(--signal-green);
+  border: none;
+  border-radius: 4px;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: background-color 120ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  margin-left: auto;
+}
+
+.buildButton:hover:not(:disabled) {
+  background: var(--signal-green-deep);
+}
+
+.buildButton:focus-visible {
+  outline: 1px solid var(--signal-green);
+  outline-offset: 2px;
+}
+
+.buildButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Pending + truncation notice */
+
+.pending {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-md);
+  color: var(--muted);
+  font-size: 0.9375rem;
+  margin-bottom: var(--space-md);
+}
+
+.truncated {
+  border: 1px solid var(--edge-amber);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--edge-amber);
+  font-size: 0.8125rem;
+  margin-bottom: var(--space-md);
+}
+
 /* Construction cards */
 
 .constructionList {

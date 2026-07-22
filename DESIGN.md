@@ -107,7 +107,7 @@ A near-black terminal base with one deliberate signal color; everything else is 
 - **Border** (`oklch(0.26 0.006 150)`): Hairline dividers between data rows and panels.
 
 ### Named Rules
-**The One Signal Rule.** Signal Green appears only when a real, calibration-checked edge exists — never as branding, never on a button that isn't the primary action, never as page furniture. Its rarity is what makes it mean something.
+**The One Signal Rule.** Signal Green appears only when a real, calibration-checked edge exists — never as branding, never on a button that isn't the primary action, never as page furniture. Its rarity is what makes it mean something. On pages that surface no edge (e.g. `/builder`), Signal Green marks *the one number the user came for* — on `/builder` that is joint probability, green only when a construction is genuinely low-risk (≥ 75% to hit). The rule's spirit — green is rare and meaningful, never decorative — is unchanged.
 
 **The No-Tint-Drift Rule.** Every neutral (Surface, Ink, Muted, Border) shares Signal Green's hue (150°) at near-zero chroma. This is what keeps a mostly-gray-and-black screen from reading as generic dark mode — it's one palette at every step, not a neutral gray system with a color bolted on.
 

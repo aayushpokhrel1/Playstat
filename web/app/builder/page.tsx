@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getBetPerformance, getSavedBuilderParlays } from "../lib/api";
-import ConstructionList from "./ConstructionList";
+import BuilderControls from "./BuilderControls";
 import RetryButton from "./RetryButton";
 import styles from "./builder.module.css";
 
@@ -86,7 +86,7 @@ export default async function BuilderPage() {
               <div className={styles.sectionHeader}>
                 <h2 className={styles.sectionTitle}>Tonight&apos;s low-risk parlays</h2>
               </div>
-              <ConstructionList constructions={saved ?? []} />
+              <BuilderControls initial={saved ?? []} />
             </section>
           </>
         )}

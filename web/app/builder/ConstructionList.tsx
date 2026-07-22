@@ -58,8 +58,8 @@ export default function ConstructionList({
                   <span>{formatOdds(leg.odds)}</span>
                   <span className={styles.legMarketProb}>{formatPercent(leg.market_prob)}</span>
                   <span className={styles.legModelProb}>
-                    {leg.model_prob === null ? "—" : formatPercent(leg.model_prob)} model — not
-                    used for ranking
+                    model: {leg.model_prob === null ? "—" : formatPercent(leg.model_prob)} (not
+                    used for ranking)
                   </span>
                 </span>
               </div>
