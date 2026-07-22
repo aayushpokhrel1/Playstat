@@ -197,3 +197,12 @@ class BuilderParlayOut(BaseModel):
     combined_odds: float
     joint_prob: float
     n_legs: int
+
+
+class BuilderSearchOut(BaseModel):
+    constructions: list[BuilderParlayOut]
+    # Whether the search hit its node budget and returned partial results.
+    # exhaustive is the inverse, surfaced positively for call-site clarity.
+    truncated: bool
+    nodes_searched: int
+    exhaustive: bool

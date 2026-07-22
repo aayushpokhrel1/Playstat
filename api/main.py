@@ -13,6 +13,7 @@ from api.schemas import (
     BoxScoreOut,
     BuilderLegOut,
     BuilderParlayOut,
+    BuilderSearchOut,
     ClvSummaryOut,
     EdgeDistributionOut,
     EdgeOut,
@@ -479,7 +480,7 @@ def list_parlay_recommendations(limit: int = 10):
     return results
 
 
-@app.get("/parlay-builder", response_model=list[BuilderParlayOut])
+@app.get("/parlay-builder", response_model=BuilderSearchOut)
 def parlay_builder(
     target_payout: float | None = None,
     min_prob: float | None = None,
@@ -490,6 +491,10 @@ def parlay_builder(
     top_n: int = 10,
 ):
     """Low-risk parlay constructions ranked by de-vigged MARKET probability.
+
+    Returns an object `{constructions, truncated, nodes_searched, exhaustive}` —
+    truncated/exhaustive report whether the search hit its node budget and
+    returned partial results.
 
     Pin target_payout and/or min_prob. joint_prob is the honest probability the
     whole parlay hits. No edge or expected-value claim is made or returned.
@@ -513,12 +518,13 @@ def parlay_builder(
 
     legs = builder.load_legs(engine, floor)
     if not legs:
-        return []
+        return BuilderSearchOut(constructions=[], truncated=False, nodes_searched=0, exhaustive=True)
+    stats: dict = {}
     results = builder_core.build(
         legs, target_payout=target_payout, tolerance=tolerance, min_prob=min_prob,
-        min_legs=min_legs, max_legs=max_legs, top_n=top_n,
+        min_legs=min_legs, max_legs=max_legs, top_n=top_n, stats=stats,
     )
-    return [
+    constructions = [
         BuilderParlayOut(
             legs=[
                 BuilderLegOut(
@@ -534,6 +540,11 @@ def parlay_builder(
         )
         for r in results
     ]
+    truncated = bool(stats.get("truncated", False))
+    return BuilderSearchOut(
+        constructions=constructions, truncated=truncated,
+        nodes_searched=int(stats.get("nodes", 0)), exhaustive=not truncated,
+    )
 
 
 @app.get("/clv-summary", response_model=list[ClvSummaryOut])
