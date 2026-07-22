@@ -72,8 +72,10 @@ def normalize_team_leg(row):
     return leg
 
 
+import bisect
 import heapq
 import itertools
+import math
 
 DEFAULT_TOLERANCE = 0.15
 DEFAULT_MIN_LEGS = 2
@@ -82,6 +84,14 @@ DEFAULT_MAX_LEGS = 4
 # (SIGKILL) on 2026-07-18 — see README §11/§15. The game-structured search below
 # makes blowing this budget very unlikely, but it stays as a guaranteed bound.
 MAX_NODES = 5_000_000
+
+# Lagrange multipliers for the floor-aware joint-probability bound on the payout
+# axis (see build()). The bound is valid for every lambda >= 0; taking the
+# minimum over this small geometric grid gives a tight upper bound cheaply. 0.0
+# recovers the plain best_prob_from bound; the positive values bite while the
+# payout floor still forces odds (and therefore lost probability) onto the
+# remaining legs.
+LAMBDA_GRID = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0)
 
 
 def dedupe_by_price(legs):
@@ -100,6 +110,28 @@ def dedupe_by_price(legs):
         if current is None or leg["market_prob"] > current["market_prob"]:
             best[key] = leg
     return list(best.values())
+
+
+def _suffix_prod_desc(per_game, n_games):
+    """table[gi][r] = product of the r largest values in per_game[gi:] (r>=0)."""
+    table = []
+    for gi in range(n_games + 1):
+        prefix = [1.0]
+        for value in sorted(per_game[gi:], reverse=True):
+            prefix.append(prefix[-1] * value)
+        table.append(prefix)
+    return table
+
+
+def _suffix_sum_desc(per_game, n_games):
+    """table[gi][r] = sum of the r largest values in per_game[gi:] (r>=0)."""
+    table = []
+    for gi in range(n_games + 1):
+        prefix = [0.0]
+        for value in sorted(per_game[gi:], reverse=True):
+            prefix.append(prefix[-1] + value)
+        table.append(prefix)
+    return table
 
 
 def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
@@ -124,23 +156,58 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
     place. Enumerating flat leg tuples instead would generate billions of
     same-game combinations only to discard them.
 
-    Search is a SINGLE unbounded pass (no odds ceiling), bounded by an EXACT
-    heap-aware prune. It is provably identical to a pure global brute force on
-    EVERY slate — no assumption about odds/probability correlation. (An earlier
-    progressive-widening early-stop was exact only when higher payout implied
-    strictly lower joint_prob, which holds on uniform-vig book lines but not in
-    general; it missed ~0.5% of optima on wide-vig synthetic slates.)
+    Search is a SINGLE unbounded pass (no odds ceiling), bounded by EXACT prunes.
+    It is provably identical to a pure global brute force on EVERY slate — no
+    assumption about odds/probability correlation. (An earlier progressive-widening
+    early-stop was exact only when higher payout implied strictly lower joint_prob,
+    which holds on uniform-vig book lines but not in general; it missed ~0.5% of
+    optima on wide-vig synthetic slates.)
 
-    The heap-aware prune discards only subtrees that provably cannot enter the
-    top_n once the heap is full (holds top_n entries):
-    - joint_prob axis (target_payout pinned): decimal odds are all >= 1, so
-      joint_prob only FALLS as legs are added. A partial branch's running prob
-      is therefore an upper bound on any completion's joint_prob; if that bound
-      <= the current N-th best joint_prob, the whole subtree is dead.
-    - combined_odds axis (min_prob pinned): a partial branch's maximum reachable
-      payout is odds * best_from[gi][remaining] (the exact suffix-maximum). As gi
-      advances best_from only shrinks, so once that maximum <= the current N-th
-      best odds, no later game can beat it either.
+    The two axes are exact DUALS (2026-07-22 work, README §15.10): each ranks by
+    one quantity subject to a floor on the other, and each is bounded by the same
+    three-part machinery with the roles of odds<->probability and
+    target_payout<->min_prob swapped. Legs within a game are visited in DESCENDING
+    order of the RANK quantity, so every rank bound is monotone and ends a game's
+    leg loop rather than skipping one leg at a time.
+
+    target_payout pinned: rank by joint_prob, floor combined_odds >= lo (visit
+    legs by descending market probability):
+    (a) best_prob_from prune: prob * best_prob_from[gi][remaining] upper-bounds
+        any completion's joint_prob (decimal odds are all >= 1, so joint_prob
+        only falls as legs are added). Once it can't beat the N-th best, done.
+    (b) floor-aware Lagrangian bound: reaching the payout floor forces the
+        remaining legs to carry odds, and high-odds legs carry low probability.
+        For any lambda >= 0, a floor-clearing completion's joint_prob is at most
+        prob times the product of the `remaining` largest per-game
+        max(p * d**lambda), divided by R**lambda where R = lo/odds is the odds
+        still needed. The minimum over LAMBDA_GRID is a far tighter bound than (a)
+        while the floor binds — the prune that stops a 1.4x/2.0x floor from
+        forcing the search millions of nodes deep.
+    (c) last-leg odds-constrained bound: the final leg must itself clear the floor
+        (decimal_odds >= lo/odds), and among legs that do the best probability is
+        exact (suffix_pmax). If even that can't beat the N-th best the whole game's
+        last leg is skipped — the single biggest win on the real slate, because
+        best_prob_from (a) wrongly assumes the last leg could be a ~1.0x
+        near-certainty when the floor forbids it.
+
+    min_prob pinned: rank by combined_odds, floor joint_prob >= min_prob (visit
+    legs by descending decimal odds). The exact dual of the above:
+    (a') best_from prune: odds * best_from[gi][remaining] upper-bounds any
+         completion's combined_odds.
+    (b') floor-aware Lagrangian bound: keeping joint_prob >= min_prob limits how
+         much odds the remaining legs can add (high odds cost probability). Same
+         form with odds<->prob swapped; here R = min_prob/prob is the probability
+         still allowed to be spent, and because prod(p) has no >= 1 floor the
+         need term is NOT clamped to 0 (it is for the payout dual, where prod(d)>=1).
+    (c') last-leg prob-constrained bound: the final leg must keep joint_prob >=
+         min_prob (market_prob >= min_prob/prob), and among legs that do the best
+         combined_odds is exact (suffix_omax); skip the game if it can't beat the
+         N-th best.
+
+    All prunes are verified exact by the pure global brute-force oracle in
+    tests/test_builder_search_exactness.py, including its independent-draw and
+    favourite-heavy adversarial slates. MAX_NODES stays a hard bound and the
+    `truncated` flag is surfaced if it is ever hit.
 
     tolerance is retained for API/CLI/daily_chain compatibility but no longer
     affects results — the search is exact and unbounded, so there is no band to
@@ -153,48 +220,16 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
     for leg in dedupe_by_price(legs):
         by_game.setdefault(leg["game_id"], []).append(leg)
     games = sorted(by_game.values(), key=lambda gl: min(l["decimal_odds"] for l in gl))
-    for group in games:
-        group.sort(key=lambda leg: leg["decimal_odds"])
-
-    # target_payout is now a floor: any qualifying construction must have
-    # combined_odds >= lo. (When only min_prob is pinned, lo stays None and
-    # the probability floor below does all the filtering, unchanged.)
-    lo = target_payout
-
     n_games = len(games)
-    game_max = [max(leg["decimal_odds"] for leg in gl) for gl in games]
-    # best_from[gi][r] = the largest payout obtainable by taking r legs from
-    # games[gi:]. Lets a branch that can never reach the payout floor die early,
-    # which matters because most legs are heavy favourites priced near 1.0x.
-    best_from = []
-    for gi in range(n_games + 1):
-        prefix = [1.0]
-        for value in sorted(game_max[gi:], reverse=True):
-            prefix.append(prefix[-1] * value)
-        best_from.append(prefix)
-
-    # best_prob_from[gi][r] = the largest joint probability obtainable by taking
-    # r legs from games[gi:] (product of the r largest per-game max market_probs
-    # in the suffix). The exact probability dual of best_from: any completion of
-    # a branch drawing `remaining` legs from games[gi:] has joint_prob at most
-    # prob * best_prob_from[gi][remaining]. If that upper bound falls below the
-    # min_prob floor the whole branch is dead — and since the suffix maximum only
-    # shrinks as gi advances, no later game can rescue it either. This look-ahead
-    # is what keeps the min_prob axis exhaustive: the per-step floor check alone
-    # still explores branches that provably can never reach the floor.
-    game_prob_max = [max(leg["market_prob"] for leg in gl) for gl in games]
-    best_prob_from = []
-    for gi in range(n_games + 1):
-        prefix = [1.0]
-        for value in sorted(game_prob_max[gi:], reverse=True):
-            prefix.append(prefix[-1] * value)
-        best_prob_from.append(prefix)
-
+    lo = target_payout
     rank_by_payout = target_payout is None and min_prob is not None
 
-    # A single unbounded pass (no odds ceiling), bounded by an exact heap-aware
-    # prune. See the docstring for the two upper-bound arguments that make the
-    # prune lossless; nothing here depends on odds/probability correlation.
+    # Suffix-maximum look-aheads (independent of leg order within a game).
+    game_max = [max(leg["decimal_odds"] for leg in gl) for gl in games]
+    best_from = _suffix_prod_desc(game_max, n_games)
+    game_prob_max = [max(leg["market_prob"] for leg in gl) for gl in games]
+    best_prob_from = _suffix_prod_desc(game_prob_max, n_games)
+
     heap = []
     counter = itertools.count()
     state = {"nodes": 0, "truncated": False, "matches": 0}
@@ -210,68 +245,242 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
         elif key > heap[0][0]:
             heapq.heapreplace(heap, entry)
 
-    def descend(start, chosen, odds, prob, size):
-        if state["truncated"]:
-            return
-        # Heap-aware prune (exact), joint_prob axis: joint_prob only falls as
-        # legs are added, so the running prob is an upper bound on any
-        # completion's joint_prob. Once the heap holds top_n, a branch that
-        # cannot strictly beat the current N-th best is dead.
-        if not rank_by_payout and len(heap) == top_n and prob <= heap[0][0]:
-            return
-        if len(chosen) == size:
-            if lo is not None and odds < lo:
-                return
-            if min_prob is not None and prob < min_prob:
-                return
-            keep({
-                "legs": list(chosen),
-                "combined_odds": odds,
-                "joint_prob": prob,
-                "n_legs": size,
-            })
-            return
-        remaining = size - len(chosen)
-        for gi in range(start, n_games - remaining + 1):
-            # Even the best legs left cannot reach the floor; suffix maxima only
-            # shrink as gi advances, so no later game can rescue this branch.
-            if lo is not None and odds * best_from[gi][remaining] < lo:
-                break
-            # Probability dual: the best joint_prob reachable from here is
-            # prob * best_prob_from[gi][remaining] (exact suffix maximum). If that
-            # can't clear the min_prob floor, no completion qualifies, and the
-            # suffix max only shrinks as gi advances -> the whole tail is dead.
-            if min_prob is not None and prob * best_prob_from[gi][remaining] < min_prob:
-                break
-            # Heap-aware prune (exact), combined_odds axis: max reachable payout
-            # from here is odds * best_from[gi][remaining]; best_from shrinks as
-            # gi advances, so once it can't beat the N-th best odds, no later
-            # game can either.
-            if rank_by_payout and len(heap) == top_n and odds * best_from[gi][remaining] <= heap[0][0]:
-                break
-            for leg in games[gi]:
-                state["nodes"] += 1
-                if state["nodes"] > max_nodes:
-                    state["truncated"] = True
-                    return
-                next_odds = odds * leg["decimal_odds"]
-                next_prob = prob * leg["market_prob"]
-                # Joint probability only falls as legs are added.
-                if min_prob is not None and next_prob < min_prob:
-                    continue
-                chosen.append(leg)
-                descend(gi + 1, chosen, next_odds, next_prob, size)
-                chosen.pop()
-                if state["truncated"]:
-                    return
+    if rank_by_payout:
+        # ---- min_prob axis: filter joint_prob >= min_prob, rank by combined_odds.
+        # Exact DUAL of the target_payout axis below — swap the roles of odds<->prob
+        # and lo<->min_prob throughout. Legs are visited in DESCENDING decimal odds
+        # (the rank key) so every odds bound is monotone and ends a game's leg loop.
+        for group in games:
+            group.sort(key=lambda leg: leg["decimal_odds"], reverse=True)
+        # min_prob <= 0 is a vacuous floor (every construction qualifies): the
+        # floor look-aheads below all no-op, and the floor-aware Lagrangian (b')
+        # is skipped (log(0) is undefined and there is nothing to bound against).
+        prob_floored = min_prob > 0.0
+        logmp = math.log(min_prob) if prob_floored else 0.0
+        # Probability-ascending copy per game for the last-leg floor bisect, plus a
+        # suffix-max of ODDS over it: suffix_omax[gi][k] is the largest decimal_odds
+        # among legs in game gi with market_prob >= game_probs[gi][k].
+        game_legs_by_prob = [sorted(gl, key=lambda l: l["market_prob"]) for gl in games]
+        game_probs = [[l["market_prob"] for l in gl] for gl in game_legs_by_prob]
+        suffix_omax = []
+        for gl in game_legs_by_prob:
+            sm = [0.0] * (len(gl) + 1)
+            for k in range(len(gl) - 1, -1, -1):
+                o = gl[k]["decimal_odds"]
+                sm[k] = o if o > sm[k + 1] else sm[k + 1]
+            suffix_omax.append(sm)
+        log_o = [[math.log(l["decimal_odds"]) for l in gl] for gl in games]
+        log_p = [[math.log(l["market_prob"]) for l in gl] for gl in games]
+        smu = []
+        if prob_floored:
+            for mu in LAMBDA_GRID:
+                gw = [max(lo_ + mu * lp_ for lo_, lp_ in zip(log_o[i], log_p[i]))
+                      for i in range(n_games)]
+                smu.append(_suffix_sum_desc(gw, n_games))
 
-    for size in range(min_legs, min(max_legs, n_games) + 1):
-        descend(0, [], 1.0, 1.0, size)
+        def odds_upper_log(gi, logodds, logprob, remaining):
+            # Dual Lagrangian bound on log(combined_odds) of any floor-clearing
+            # completion. need = log(min_prob/prob) <= 0 for feasible branches
+            # (prob already clears min_prob), and is NOT clamped: the valid bound
+            # is smu - mu*need = smu + mu*|need|. (Unlike the payout dual, where
+            # prod(d) >= 1 always holds so need clamps to 0; prod(p) has no such
+            # >= 1 floor, so dropping the term would over-prune.)
+            need = logmp - logprob
+            best = None
+            for j, mu in enumerate(LAMBDA_GRID):
+                b = logodds + smu[j][gi][remaining] - mu * need
+                if best is None or b < best:
+                    best = b
+            return best
+
+        def descend(start, chosen, odds, prob, logodds, logprob, size):
+            if state["truncated"]:
+                return
+            remaining = size - len(chosen)
+            heap_full = len(heap) == top_n
+            thr = heap[0][0] if heap_full else -1.0
+            logthr = math.log(thr) if heap_full else 0.0
+            for gi in range(start, n_games - remaining + 1):
+                # Probability floor look-ahead: best joint_prob reachable from here
+                # is prob * best_prob_from[gi][remaining]; if it can't clear
+                # min_prob the branch is dead and the suffix max only shrinks.
+                if prob * best_prob_from[gi][remaining] < min_prob:
+                    break
+                if heap_full:
+                    # (a') payout bound: max reachable odds is odds*best_from[gi][r];
+                    # once it can't beat the N-th best odds no later game can either.
+                    if odds * best_from[gi][remaining] <= thr:
+                        break
+                    # (b') floor-aware Lagrangian odds bound (dual of the payout (b)).
+                    if prob_floored and odds_upper_log(gi, logodds, logprob, remaining) <= logthr:
+                        break
+                if remaining == 1:
+                    legs_p = game_legs_by_prob[gi]
+                    # Last leg must keep joint_prob >= min_prob alone: market_prob >=
+                    # min_prob/prob. Legs prob-ascending, so skip the sub-floor
+                    # prefix (a tiny relative guard keeps float rounding from
+                    # dropping a leg the leaf check would have kept).
+                    lo_idx = bisect.bisect_left(game_probs[gi], (min_prob / prob) * (1 - 1e-9))
+                    if lo_idx >= len(legs_p):
+                        continue
+                    # (c') best qualifying last leg's odds = suffix_omax[gi][lo_idx];
+                    # if odds*that can't beat the N-th best, skip the whole game.
+                    if heap_full and odds * suffix_omax[gi][lo_idx] <= thr:
+                        continue
+                    for li in range(lo_idx, len(legs_p)):
+                        leg = legs_p[li]
+                        state["nodes"] += 1
+                        if state["nodes"] > max_nodes:
+                            state["truncated"] = True
+                            return
+                        next_prob = prob * leg["market_prob"]
+                        if next_prob < min_prob:
+                            continue
+                        keep({"legs": chosen + [leg], "combined_odds": odds * leg["decimal_odds"],
+                              "joint_prob": next_prob, "n_legs": size})
+                else:
+                    legs_gi = games[gi]
+                    bo = odds * best_from[gi + 1][remaining - 1]
+                    bpf = best_prob_from[gi + 1][remaining - 1]
+                    lo_gi = log_o[gi]
+                    lp_gi = log_p[gi]
+                    for li in range(len(legs_gi)):
+                        leg = legs_gi[li]
+                        if heap_full and bo * leg["decimal_odds"] <= thr:
+                            break  # (a'), odds descending -> the rest fail too
+                        next_prob = prob * leg["market_prob"]
+                        # Floor feasibility: this leg plus the best of the remaining
+                        # legs must still reach min_prob. Not monotone in odds order
+                        # -> skip this leg, don't end the loop.
+                        if next_prob * bpf < min_prob:
+                            continue
+                        state["nodes"] += 1
+                        if state["nodes"] > max_nodes:
+                            state["truncated"] = True
+                            return
+                        chosen.append(leg)
+                        descend(gi + 1, chosen, odds * leg["decimal_odds"], next_prob,
+                                logodds + lo_gi[li], logprob + lp_gi[li], size)
+                        chosen.pop()
+                        if state["truncated"]:
+                            return
+    else:
+        # ---- target_payout axis: filter combined_odds >= lo (and joint_prob >= ----
+        # min_prob if also pinned), rank by joint_prob. See docstring (a)/(b)/(c).
+        # Legs visited in DESCENDING probability so every bound below is monotone.
+        for group in games:
+            group.sort(key=lambda leg: leg["market_prob"], reverse=True)
+        floored = lo is not None
+        loglo = math.log(lo) if floored else 0.0
+        # Odds-ascending copy per game for the last-leg floor bisect, plus a
+        # suffix-max of probability over it: suffix_pmax[gi][k] is the largest
+        # market_prob among legs in game gi with decimal_odds >= game_odds[gi][k].
+        game_legs_by_odds = [sorted(gl, key=lambda l: l["decimal_odds"]) for gl in games]
+        game_odds = [[l["decimal_odds"] for l in gl] for gl in game_legs_by_odds]
+        suffix_pmax = []
+        for gl in game_legs_by_odds:
+            sm = [0.0] * (len(gl) + 1)
+            for k in range(len(gl) - 1, -1, -1):
+                p = gl[k]["market_prob"]
+                sm[k] = p if p > sm[k + 1] else sm[k + 1]
+            suffix_pmax.append(sm)
+        # Per-game logs parallel to the probability-descending order, so the hot
+        # recursion never calls math.log.
+        log_d = [[math.log(l["decimal_odds"]) for l in gl] for gl in games]
+        log_p = [[math.log(l["market_prob"]) for l in gl] for gl in games]
+        # Floor-aware Lagrangian tables (only meaningful when a floor is pinned).
+        slam = []
+        if floored:
+            for lam in LAMBDA_GRID:
+                gw = [max(lp + lam * ld for lp, ld in zip(log_p[i], log_d[i]))
+                      for i in range(n_games)]
+                slam.append(_suffix_sum_desc(gw, n_games))
+
+        def prob_upper_log(gi, logprob, logodds, remaining):
+            need = loglo - logodds
+            if need < 0.0:
+                need = 0.0
+            best = None
+            for j, lam in enumerate(LAMBDA_GRID):
+                b = logprob + slam[j][gi][remaining] - lam * need
+                if best is None or b < best:
+                    best = b
+            return best
+
+        def descend(start, chosen, odds, prob, logodds, logprob, size):
+            if state["truncated"]:
+                return
+            remaining = size - len(chosen)
+            heap_full = len(heap) == top_n
+            thr = heap[0][0] if heap_full else -1.0
+            logthr = math.log(thr) if heap_full else 0.0
+            for gi in range(start, n_games - remaining + 1):
+                if floored and odds * best_from[gi][remaining] < lo:
+                    break
+                if heap_full:
+                    if prob * best_prob_from[gi][remaining] <= thr:
+                        break  # (a)
+                    if floored and prob_upper_log(gi, logprob, logodds, remaining) <= logthr:
+                        break  # (b)
+                if remaining == 1:
+                    legs_o = game_legs_by_odds[gi]
+                    lo_idx = 0
+                    if floored:
+                        # Last leg must clear the floor alone: decimal_odds >=
+                        # lo/odds. Legs are odds-ascending, so skip the sub-floor
+                        # prefix (a tiny relative guard keeps float rounding from
+                        # dropping a leg the leaf check would have kept).
+                        lo_idx = bisect.bisect_left(game_odds[gi], (lo / odds) * (1 - 1e-9))
+                        if lo_idx >= len(legs_o):
+                            continue
+                        if heap_full and prob * suffix_pmax[gi][lo_idx] <= thr:
+                            continue  # (c)
+                    for li in range(lo_idx, len(legs_o)):
+                        leg = legs_o[li]
+                        state["nodes"] += 1
+                        if state["nodes"] > max_nodes:
+                            state["truncated"] = True
+                            return
+                        next_odds = odds * leg["decimal_odds"]
+                        if floored and next_odds < lo:
+                            continue
+                        next_prob = prob * leg["market_prob"]
+                        if min_prob is not None and next_prob < min_prob:
+                            continue
+                        keep({"legs": chosen + [leg], "combined_odds": next_odds,
+                              "joint_prob": next_prob, "n_legs": size})
+                else:
+                    legs_gi = games[gi]
+                    bp = prob * best_prob_from[gi + 1][remaining - 1]
+                    ld_gi = log_d[gi]
+                    lp_gi = log_p[gi]
+                    for li in range(len(legs_gi)):
+                        leg = legs_gi[li]
+                        leg_prob = leg["market_prob"]
+                        if heap_full and bp * leg_prob <= thr:
+                            break  # (a), probability descending -> the rest fail too
+                        next_prob = prob * leg_prob
+                        if min_prob is not None and next_prob < min_prob:
+                            break
+                        state["nodes"] += 1
+                        if state["nodes"] > max_nodes:
+                            state["truncated"] = True
+                            return
+                        chosen.append(leg)
+                        descend(gi + 1, chosen, odds * leg["decimal_odds"], next_prob,
+                                logodds + ld_gi[li], logprob + lp_gi[li], size)
+                        chosen.pop()
+                        if state["truncated"]:
+                            return
+
+    max_reach = min(max_legs, n_games)
+    for size in range(min_legs, max_reach + 1):
+        descend(0, [], 1.0, 1.0, 0.0, 0.0, size)
         if state["truncated"]:
             break
 
-    # Pinning the probability floor means the user asked "how much can I win at
-    # this safety level" -> rank by payout. Otherwise rank by safety.
+    # Pinning the probability floor means "how much can I win at this safety
+    # level" -> rank by payout. Otherwise rank by safety (joint probability).
     results = [entry[2] for entry in sorted(heap, key=lambda e: e[0], reverse=True)]
 
     if stats is not None:
