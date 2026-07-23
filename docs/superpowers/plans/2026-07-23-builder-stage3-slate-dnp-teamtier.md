@@ -77,16 +77,29 @@ The `market_prob >= 0.55` floor, "rank on devigged MARKET prob never model_prob"
 
 ## Tests (`tests/`)
 
-- DNP void: extend `tests/test_settle_builder.py` (it already seeds a DB) with a parlay
-  whose player has a prop line but NO `player_game_stats` row on an FT game → the leg
-  voids and the parlay settles on the remaining leg(s); an all-void parlay → push, pnl 0.
-- `parlay_result` with a `"void"` in the results list behaves as a dropped leg (pure unit
-  test, no DB).
-- Team tier: `build()` on team-only legs returns team parlays; `save_builds(..., parlay_class="team_tier")`
-  writes `class="team_tier"`; the saved endpoint with `tier=team` returns only those and
-  `tier=player` excludes them (mirror `tests/test_parlay_recommendations_api.py` patterns).
-- Slate window: if a DB fixture harness exists, assert future-dated games are excluded;
-  otherwise add a focused test on the query/param and document the manual real-data check.
+CRITICAL SAFETY: there is NO `conftest.py` and NO test database. `tests/test_settle_builder.py`
+is PURE (tests `builder_leg_key`, `parlay_result`, `_as_legs_list` — no DB). `ingestion.db.get_engine()`
+points at the LIVE production database (from `.env`). Therefore new tests MUST NOT call
+`save_builds`, `settle_builder_parlays`, `settle_parlays`, or `settle_team_parlays` against
+`get_engine()` — that would write the live DB. Keep new tests PURE, or reuse whatever
+isolation `tests/test_parlay_recommendations_api.py` already uses for the API (inspect it;
+if it stubs/overrides the engine or uses a FastAPI TestClient dependency override, mirror
+that — never point a write path at the live engine).
+
+- DNP void (PURE): make the leg-resolution decision unit-testable — extract the "FT game +
+  no stat row → void" decision into a small pure helper if needed — and test that a `"void"`
+  result in `parlay_result`'s inputs is dropped (parlay of [hit, void] settles as the hit
+  leg's odds; [void, void] → push, pnl 0; [miss, void] → loss).
+- Team tier (PURE): `build()` on team-only legs returns team parlays; `save_builds`'s JSON
+  blob carries `class="team_tier"` when so instructed (test the blob construction, not a
+  live insert).
+- Saved-endpoint `tier` param: test via the SAME isolation `test_parlay_recommendations_api.py`
+  uses (no live writes) — `tier=player`/default excludes team_tier rows; `tier=team` returns
+  only them.
+- Slate window: no DB harness exists, so test the extractable query/param logic (the date
+  predicate is added, `slate_date` defaults to today) purely; the real-data exclusion of
+  future games is verified READ-ONLY (see verification) — `load_legs` is read-only so it is
+  safe to run against the live engine to confirm no future game_ids appear.
 - Full suite must stay green (currently 201). Add, don't break.
 
 ## Out of scope (architect does these, NOT the implementer)
