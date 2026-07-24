@@ -548,15 +548,35 @@ def parlay_builder(
     )
 
 
+# tier -> the legs blob's {"class": ...} value written by optimizer/builder.py
+# save_builds(). "player" is today's only production shape (the mixed
+# player+team across-game build) and stays the default so a caller passing no
+# `tier` gets exactly today's behaviour, unchanged (README §15.9 item 3 /
+# Budgerr contract — additive-only). "team" is the new dedicated team-only
+# tier (--team-only). "all" skips the class filter entirely.
+TIER_TO_CLASS = {"player": "across_game", "team": "team_tier"}
+
+
 @app.get("/parlay-builder/saved", response_model=list[SavedBuilderParlayOut])
-def saved_builder_parlays(limit: int = 10):
+def saved_builder_parlays(limit: int = 10, tier: str = "player"):
     """The precomputed nightly low-risk builder parlays (kind='builder'), newest
     first. A fast list read (no live search) — this is the endpoint external
     consumers (Budgerr) should use, NOT the live /parlay-builder, which can take
     4-13s. Team legs (NRFI/F5) carry no team identity in `label`: they are
     game-level markets, so resolve the matchup via each leg's game_id -> /games.
     Ranked on de-vigged market probability; model_prob is context only.
+
+    tier selects which builder class to return: "player" (default, unchanged
+    behaviour — the mixed player+team across-game tier), "team" (the
+    dedicated team-only tier, higher-variance NRFI/F5-only constructions,
+    may be empty on any given slate), or "all" (no class filter).
     """
+    if tier != "all" and tier not in TIER_TO_CLASS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown tier {tier!r}: expected one of "
+                   f"{sorted(TIER_TO_CLASS) + ['all']}",
+        )
     with engine.begin() as conn:
         rows = conn.execute(
             text(
@@ -564,11 +584,14 @@ def saved_builder_parlays(limit: int = 10):
                 SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
                 FROM parlay_recommendations
                 WHERE kind = 'builder'
+                """
+                + ("" if tier == "all" else "AND legs->>'class' = :cls ")
+                + """
                 ORDER BY created_at DESC, joint_prob DESC
                 LIMIT :limit
                 """
             ),
-            {"limit": limit},
+            {"limit": limit, "cls": TIER_TO_CLASS.get(tier)},
         ).fetchall()
 
     out = []

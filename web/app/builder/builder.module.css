@@ -273,6 +273,15 @@
   margin-bottom: var(--space-md);
 }
 
+/* Team tier */
+
+.tierNote {
+  color: var(--muted);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  margin: 0 0 var(--space-md);
+}
+
 /* Construction cards */
 
 .constructionList {

@@ -1,3 +1,6 @@
+import pytest
+from fastapi import HTTPException
+
 import api.main as main
 
 
@@ -61,6 +64,92 @@ def test_saved_builder_reads_only_builder_rows_and_unwraps_dict(monkeypatch):
     assert out[0].n_legs == 2
     team_leg = [l for l in out[0].legs if l.kind == "team"][0]
     assert team_leg.player_id is None and team_leg.market == "first_inning_runs"
+
+
+# --- GET /parlay-builder/saved?tier= (README §15 Change 3) ------------------
+# tier selects the legs->>'class' filter added to the WHERE clause. Additive:
+# no `tier` (or `tier=player`) must reproduce today's exact query — filtering
+# on class='across_game', the shape every existing saved row has. There is no
+# test DB, so actual row-level filtering happens in Postgres; what's testable
+# here without touching the live engine is that the endpoint builds the right
+# SQL/params for each tier, which is what actually drives that filtering.
+
+class _CapturingConn:
+    def __init__(self, calls):
+        self._calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, stmt, params=None):
+        self._calls.append((str(stmt), params))
+        return _FakeResult([])
+
+
+class _CapturingEngine:
+    def __init__(self):
+        self.calls = []
+
+    def begin(self):
+        return _CapturingConn(self.calls)
+
+
+def test_saved_default_tier_filters_to_across_game_class(monkeypatch):
+    engine = _CapturingEngine()
+    monkeypatch.setattr(main, "engine", engine)
+
+    out = main.saved_builder_parlays(limit=10)  # no tier passed
+
+    assert out == []
+    sql, params = engine.calls[0]
+    assert "legs->>'class' = :cls" in sql
+    assert params["cls"] == "across_game"
+
+
+def test_saved_tier_player_matches_default_behaviour(monkeypatch):
+    engine = _CapturingEngine()
+    monkeypatch.setattr(main, "engine", engine)
+
+    main.saved_builder_parlays(limit=10, tier="player")
+
+    sql, params = engine.calls[0]
+    assert "legs->>'class' = :cls" in sql
+    assert params["cls"] == "across_game"
+
+
+def test_saved_tier_team_filters_to_team_tier_class(monkeypatch):
+    engine = _CapturingEngine()
+    monkeypatch.setattr(main, "engine", engine)
+
+    main.saved_builder_parlays(limit=10, tier="team")
+
+    sql, params = engine.calls[0]
+    assert "legs->>'class' = :cls" in sql
+    assert params["cls"] == "team_tier"
+
+
+def test_saved_tier_all_skips_the_class_filter_entirely(monkeypatch):
+    engine = _CapturingEngine()
+    monkeypatch.setattr(main, "engine", engine)
+
+    main.saved_builder_parlays(limit=10, tier="all")
+
+    sql, _ = engine.calls[0]
+    assert "legs->>'class'" not in sql
+
+
+def test_saved_rejects_unknown_tier_without_touching_the_engine(monkeypatch):
+    engine = _CapturingEngine()
+    monkeypatch.setattr(main, "engine", engine)
+
+    with pytest.raises(HTTPException) as exc_info:
+        main.saved_builder_parlays(limit=10, tier="bogus")
+
+    assert exc_info.value.status_code == 422
+    assert engine.calls == []  # never reached the DB layer
 
 
 def test_parlay_builder_returns_object_with_truncation_fields(monkeypatch):

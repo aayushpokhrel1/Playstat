@@ -92,7 +92,9 @@ run_chain() {
 		"$PY" -m modeling.edges &&
 		"$PY" -m modeling.backtest --sport mlb &&
 		"$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save
+		"$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
+		"$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
+		"$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --save
 }
 # The old `optimizer.parlay --target-payout 2.0 --max-legs 3` step lived here and
 # OOM-died (SIGKILL) nightly — 1,060 edges > 3% meant C(1060,3) ~ 198M combinations
@@ -103,6 +105,14 @@ run_chain() {
 # Tolerance is tightened to 0.10 (default 0.15) because ranking by joint
 # probability always returns the least-risky end of the band, so a wide band
 # records a bet well below its nominal target (README §15.10).
+#
+# The two --team-only builds add a dedicated, separately-tracked team tier
+# (README §15.9 item 5 / §15.10 team-legs note): NRFI/F5 markets price near
+# coin-flip and are structurally out-competed by player-prop favorites in the
+# mixed pool above, so team legs almost never surfaced there. This tier can
+# legitimately find nothing on a given slate (`optimizer.builder` prints "no
+# candidate legs" and returns normally, exit 0) — that is expected, not a
+# chain failure.
 
 if run_chain; then
 	echo "$today" >"$STATE"

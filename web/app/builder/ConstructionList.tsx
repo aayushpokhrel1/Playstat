@@ -11,17 +11,18 @@ function formatPercent(value: number): string {
 
 export default function ConstructionList({
   constructions,
+  emptyTitle = "No parlays recorded yet",
+  emptyBody = "The nightly builder search runs once per slate and saves its lowest-risk results here. Check back after tonight's search completes.",
 }: {
   constructions: BuilderConstruction[];
+  emptyTitle?: string;
+  emptyBody?: string;
 }) {
   if (constructions.length === 0) {
     return (
       <div className={styles.emptyState}>
-        <p className={styles.emptyStateTitle}>No parlays recorded yet</p>
-        <p>
-          The nightly builder search runs once per slate and saves its lowest-risk results here.
-          Check back after tonight&apos;s search completes.
-        </p>
+        <p className={styles.emptyStateTitle}>{emptyTitle}</p>
+        <p>{emptyBody}</p>
       </div>
     );
   }

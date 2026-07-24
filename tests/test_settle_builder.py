@@ -1,5 +1,10 @@
+import inspect
+
 import pytest
-from modeling.settle import builder_leg_key, settle_leg, parlay_result
+from modeling.settle import (
+    builder_leg_key, leg_status, parlay_result, settle_builder_parlays,
+    settle_leg, settle_parlays, settle_team_parlays,
+)
 
 
 def test_builder_leg_key_player():
@@ -44,3 +49,59 @@ def test_as_legs_list_passes_through_parsed_jsonb():
     assert _as_legs_list(wrapper) is wrapper
     assert _as_legs_list([{"kind": "team"}]) == [{"kind": "team"}]
     assert _as_legs_list('[{"kind": "player"}]') == [{"kind": "player"}]
+
+
+# --- DNP void handling (README §15.10 KNOWN ISSUE / §15.9 item 6) -----------
+# A scratched/DNP player (or a team-market game with no team_game_stats
+# aggregate) leaves a game FT with no stat row. Standard book rule: void the
+# leg like a push instead of stranding the whole parlay "not ready" forever.
+
+def test_leg_status_pending_when_game_not_ft():
+    assert leg_status("S", None) == "pending"
+    assert leg_status("S", 3.0) == "pending"  # game state always wins first
+
+
+def test_leg_status_void_when_ft_and_no_stat_row():
+    assert leg_status("FT", None) == "void"
+    assert leg_status("FT", float("nan")) == "void"
+
+
+def test_leg_status_ready_when_ft_and_stat_present():
+    assert leg_status("FT", 0.0) == "ready"  # 0 is a real value, not missing
+    assert leg_status("FT", 3.0) == "ready"
+
+
+def test_parlay_result_hit_plus_void_settles_as_the_hit_legs_odds():
+    """A void leg is dropped exactly like a pushed leg — parlay_result already
+    filters to hit/miss, so 'void' needs no special-casing there (verified here)."""
+    result, odds, pnl = parlay_result(["hit", "void"], [1.5, 1.4])
+    assert result == "win"
+    assert odds == pytest.approx(1.5)  # recomputed over the hit leg only
+    assert pnl == pytest.approx(0.5)
+
+
+def test_parlay_result_all_void_is_a_no_action_push():
+    result, odds, pnl = parlay_result(["void", "void"], [1.5, 1.4])
+    assert result == "push"
+    assert odds == pytest.approx(1.0)
+    assert pnl == pytest.approx(0.0)
+
+
+def test_parlay_result_miss_plus_void_is_a_loss():
+    result, _, pnl = parlay_result(["miss", "void"], [1.5, 1.4])
+    assert result == "loss"
+    assert pnl == pytest.approx(-1.0)
+
+
+# --- regression guards: all three settle_* paths share the void rule --------
+# (README §15.10: "Both gaps are shared by the settle_parlays/settle_team_parlays
+# paths.") No live DB is available to exercise these end to end (ingestion.db.
+# get_engine() points at production), so this asserts the void branch is wired
+# into each function's source rather than running it.
+
+@pytest.mark.parametrize("fn", [settle_parlays, settle_team_parlays, settle_builder_parlays])
+def test_settle_function_voids_dnp_legs_via_leg_status(fn):
+    source = inspect.getsource(fn)
+    assert "leg_status(" in source
+    assert '"void"' in source
+    assert '"dnp": True' in source

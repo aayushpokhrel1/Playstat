@@ -1,16 +1,22 @@
 import Link from "next/link";
 import { getBetPerformance, getSavedBuilderParlays } from "../lib/api";
 import BuilderControls from "./BuilderControls";
+import ConstructionList from "./ConstructionList";
 import RetryButton from "./RetryButton";
 import styles from "./builder.module.css";
 
 export default async function BuilderPage() {
   let saved;
+  let teamSaved;
   let betPerformance;
   let fetchError: string | null = null;
 
   try {
-    [saved, betPerformance] = await Promise.all([getSavedBuilderParlays(), getBetPerformance()]);
+    [saved, teamSaved, betPerformance] = await Promise.all([
+      getSavedBuilderParlays(10, "player"),
+      getSavedBuilderParlays(10, "team"),
+      getBetPerformance(),
+    ]);
   } catch {
     fetchError = "Can't reach the Playstat API at localhost:8000. Make sure the service is running.";
   }
@@ -87,6 +93,22 @@ export default async function BuilderPage() {
                 <h2 className={styles.sectionTitle}>Tonight&apos;s low-risk parlays</h2>
               </div>
               <BuilderControls initial={saved ?? []} />
+            </section>
+
+            <section className={styles.section} aria-label="Team-market parlays">
+              <div className={styles.sectionHeader}>
+                <h2 className={styles.sectionTitle}>Team-market parlays</h2>
+              </div>
+              <p className={styles.tierNote}>
+                NRFI / F5 team markets price close to a coin flip, so this tier is
+                higher-variance than the player-prop tier above — and it may come up
+                empty on any given night. That&apos;s expected, not a bug.
+              </p>
+              <ConstructionList
+                constructions={teamSaved ?? []}
+                emptyTitle="No team-market parlays tonight"
+                emptyBody="NRFI/F5 lines rarely clear the safety floor, so an empty night here is normal — check back tomorrow, or after the next nightly build."
+              />
             </section>
           </>
         )}
