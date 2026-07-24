@@ -205,8 +205,13 @@ export function getBetPerformance() {
   return apiGet<BetPerformance[]>("/bet-performance");
 }
 
-export function getSavedBuilderParlays(limit = 10) {
-  return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}`);
+// tier is additive (README §15 Change 3): "player" is the default and
+// matches today's exact saved shape (the mixed player+team across-game
+// tier); "team" is the new dedicated, higher-variance NRFI/F5-only tier,
+// which may legitimately be empty on any given slate; "all" skips the
+// class filter server-side.
+export function getSavedBuilderParlays(limit = 10, tier: "player" | "team" | "all" = "player") {
+  return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}&tier=${tier}`);
 }
 
 export function searchBuilder(params: BuilderSearchParams) {

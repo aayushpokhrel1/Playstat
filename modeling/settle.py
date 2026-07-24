@@ -46,6 +46,27 @@ def settle_leg(side, actual, line):
     raise ValueError(f"unknown side: {side!r}")
 
 
+def leg_status(game_status, actual):
+    """Classify a leg's settlement readiness from its game status and actual
+    stat value (None/NaN when no stat row exists for this player/game/stat or
+    team/game/market). Pure and DB-free — the decision used by settle_parlays,
+    settle_team_parlays and settle_builder_parlays.
+
+    - "pending": the game is not yet FT. Not an error — the whole parlay is
+      skipped and retried on a later run.
+    - "void": the game IS FT but there is no stat row for this leg (a
+      scratched/DNP player prop, or a missing team-stat aggregate). Standard
+      sportsbook rule: void the leg like a push rather than strand the
+      parlay pending forever (README §15.10 KNOWN ISSUE / §15.9 item 6).
+    - "ready": the game is FT and a stat value exists — settle_leg can score it.
+    """
+    if game_status != "FT":
+        return "pending"
+    if actual is None or actual != actual:  # NaN != NaN — no pandas import needed
+        return "void"
+    return "ready"
+
+
 def parlay_result(leg_results, leg_decimal_odds, stake=1.0):
     """Combine per-leg 'hit'/'miss'/'push' results into a parlay outcome.
 
@@ -177,13 +198,24 @@ def settle_parlays(engine):
                 player_id, game_id, stat_type = int(leg["player_id"]), int(leg["game_id"]), leg["stat_type"]
                 side, odds = leg["side"], leg["odds"]
 
-                if game_status.get(game_id) != "FT":
-                    ready = False
-                    break
+                gstatus = game_status.get(game_id)
                 actual = stats_lookup.get((player_id, game_id, stat_type))
-                if actual is None or pd.isna(actual):
+                state = leg_status(gstatus, actual)
+                if state == "pending":
                     ready = False
                     break
+                if state == "void":
+                    # FT game, no player_game_stats row -> scratched/DNP. Void
+                    # like a push: no line_value needed, settle on the rest.
+                    leg_results.append("void")
+                    leg_decimal_odds.append(american_to_decimal(odds))
+                    leg_audit.append(
+                        {
+                            "player_id": player_id, "game_id": game_id, "stat_type": stat_type,
+                            "side": side, "odds": int(odds), "result": "void", "dnp": True,
+                        }
+                    )
+                    continue
                 try:
                     snaps = lines_grouped.get_group((player_id, game_id, stat_type))
                 except KeyError:
@@ -300,11 +332,19 @@ def settle_team_parlays(engine):
             results, odds_list, audit, ready = [], [], [], True
             for leg in legs:
                 gid, market, side, odds = int(leg["game_id"]), leg["market"], leg["side"], leg["odds"]
-                if status.get(gid) != "FT":
-                    ready = False; break
+                gstatus = status.get(gid)
                 actual = team_leg_actual(totals, gid, market)
-                if actual is None:
+                state = leg_status(gstatus, actual)
+                if state == "pending":
                     ready = False; break
+                if state == "void":
+                    # FT game, no team_game_stats aggregate -> void like a push
+                    # rather than strand the parlay pending forever.
+                    results.append("void")
+                    odds_list.append(american_to_decimal(odds))
+                    audit.append({"game_id": gid, "market": market, "side": side,
+                                  "odds": int(odds), "result": "void", "dnp": True})
+                    continue
                 try:
                     snaps = lines_grp.get_group((gid, market))
                 except KeyError:
@@ -413,29 +453,43 @@ def settle_builder_parlays(engine):
             results, odds_list, audit, ready = [], [], [], True
             for leg in legs:
                 gid = int(leg["game_id"])
-                if status.get(gid) != "FT":
-                    ready = False; break
+                gstatus = status.get(gid)
 
                 key = builder_leg_key(leg)
                 if key[0] == "player":
                     _, pid, _, stat_type = key
                     actual = pstats_lookup.get((pid, gid, stat_type))
-                    try:
-                        snaps = plines_grp.get_group((pid, gid, stat_type))
-                    except KeyError:
-                        ready = False; break
                     audit_id = {"player_id": pid, "stat_type": stat_type}
                 else:
                     _, _, market = key
                     actual = tstats_lookup.get((gid, market))
+                    audit_id = {"market": market}
+
+                state = leg_status(gstatus, actual)
+                if state == "pending":
+                    ready = False; break
+                if state == "void":
+                    # FT game, no stat row on either the player or team side
+                    # (DNP/scratched player, or a missing team-stat
+                    # aggregate) -> void like a push, no line_value needed.
+                    results.append("void")
+                    odds_list.append(american_to_decimal(leg["odds"]))
+                    audit.append({**audit_id, "kind": leg["kind"], "game_id": gid,
+                                  "side": leg["side"], "odds": int(leg["odds"]),
+                                  "result": "void", "dnp": True})
+                    continue
+
+                if key[0] == "player":
+                    try:
+                        snaps = plines_grp.get_group((pid, gid, stat_type))
+                    except KeyError:
+                        ready = False; break
+                else:
                     try:
                         snaps = glines_grp.get_group((gid, market))
                     except KeyError:
                         ready = False; break
-                    audit_id = {"market": market}
 
-                if actual is None or pd.isna(actual):
-                    ready = False; break
                 line_value = _rec_snapshot(snaps, created_at)["line_value"]
                 if line_value is None or pd.isna(line_value):
                     ready = False; break
