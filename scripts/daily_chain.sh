@@ -81,20 +81,32 @@ run_chain() {
 		eval "$PLAYSTAT_CHAIN_CMD"
 		return $?
 	fi
+	# Order matters (reordered 2026-07-24, README §15.9): the low-risk builder
+	# ranks on de-vigged MARKET odds and needs ONLY games + prop_lines + game_lines
+	# (model_prob is a context-only LEFT JOIN, never used for ranking), so the four
+	# builder --save steps run RIGHT AFTER their two ingestion deps (odds_ingest,
+	# first_inning) and BEFORE the slow model pipeline (features/predict/edges/
+	# backtest, ~7h and growing). This lands the paper card in the morning, pre-game,
+	# instead of mid-afternoon behind the retrain. Trade: the builder runs before
+	# edges, so that day's saved rows carry model_prob=None (dashboard shows
+	# "model: — (not used for ranking)") — acceptable, it never ranks. The model
+	# steps still run afterward to feed the (winding-down) edges. Dependencies held:
+	# odds_ingest precedes first_inning (game_lines) and edges; features precedes
+	# predict precedes edges; settle/clv are independent of the builder.
 	"$PY" -m ingestion.mlb_backfill --only stats &&
 		"$PY" -m ingestion.mlb_backfill --only linescores &&
+		"$PY" -m ingestion.odds_ingest --sport mlb &&
+		"$PY" -m modeling.first_inning --days 2 &&
+		"$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
+		"$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
+		"$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
+		"$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
 		"$PY" -m modeling.clv &&
 		"$PY" -m modeling.settle &&
 		"$PY" -m modeling.features --sport mlb --upcoming-days 2 &&
 		"$PY" -m modeling.predict_upcoming --sport mlb --days 2 &&
-		"$PY" -m ingestion.odds_ingest --sport mlb &&
-		"$PY" -m modeling.first_inning --days 2 &&
 		"$PY" -m modeling.edges &&
-		"$PY" -m modeling.backtest --sport mlb &&
-		"$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --save
+		"$PY" -m modeling.backtest --sport mlb
 }
 # The old `optimizer.parlay --target-payout 2.0 --max-legs 3` step lived here and
 # OOM-died (SIGKILL) nightly — 1,060 edges > 3% meant C(1060,3) ~ 198M combinations
