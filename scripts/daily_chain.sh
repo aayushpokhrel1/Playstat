@@ -93,20 +93,28 @@ run_chain() {
 	# steps still run afterward to feed the (winding-down) edges. Dependencies held:
 	# odds_ingest precedes first_inning (game_lines) and edges; features precedes
 	# predict precedes edges; settle/clv are independent of the builder.
-	"$PY" -m ingestion.mlb_backfill --only stats &&
-		"$PY" -m ingestion.mlb_backfill --only linescores &&
-		"$PY" -m ingestion.odds_ingest --sport mlb &&
-		"$PY" -m modeling.first_inning --days 2 &&
-		"$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
-		"$PY" -m modeling.clv &&
-		"$PY" -m modeling.settle &&
-		"$PY" -m modeling.features --sport mlb --upcoming-days 2 &&
-		"$PY" -m modeling.predict_upcoming --sport mlb --days 2 &&
-		"$PY" -m modeling.edges &&
-		"$PY" -m modeling.backtest --sport mlb
+	# Per-step timing (2026-07-24, README §15.9 item 7 B). Profiling ruled out
+	# feature-compute (~77s) and model-training (~2s/stat) as the cause of the
+	# ~7-8h runtime; the feature UPSERT (2.3M immutable rows) is >10min and a big
+	# chunk is still unaccounted (likely the ingestion/API steps). _step logs each
+	# step's duration to mlb.log so the next run pinpoints the real bottleneck
+	# before we optimize. It preserves && short-circuit: it returns the wrapped
+	# command's exit code, so a failing step still stops the chain.
+	_step() { local n="$1"; shift; local s; s=$(date +%s); "$@"; local r=$?; echo "=== step $n: $(( $(date +%s) - s ))s rc=$r ==="; return $r; }
+	_step stats            "$PY" -m ingestion.mlb_backfill --only stats &&
+		_step linescores       "$PY" -m ingestion.mlb_backfill --only linescores &&
+		_step odds             "$PY" -m ingestion.odds_ingest --sport mlb &&
+		_step first_inning     "$PY" -m modeling.first_inning --days 2 &&
+		_step builder_1.4      "$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
+		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
+		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
+		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
+		_step clv              "$PY" -m modeling.clv &&
+		_step settle           "$PY" -m modeling.settle &&
+		_step features         "$PY" -m modeling.features --sport mlb --upcoming-days 2 &&
+		_step predict          "$PY" -m modeling.predict_upcoming --sport mlb --days 2 &&
+		_step edges            "$PY" -m modeling.edges &&
+		_step backtest         "$PY" -m modeling.backtest --sport mlb
 }
 # The old `optimizer.parlay --target-payout 2.0 --max-legs 3` step lived here and
 # OOM-died (SIGKILL) nightly — 1,060 edges > 3% meant C(1060,3) ~ 198M combinations
