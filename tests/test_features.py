@@ -9,7 +9,9 @@ matches tests/test_builder.py's convention for DB-adjacent code.
 
 from datetime import date, timedelta
 
-from modeling.features import _filter_values, _incremental_cutoff
+from modeling.features import (
+    _ALWAYS_UPSERT_FEATURES, _filter_values, _incremental_cutoff,
+)
 
 
 # --- _incremental_cutoff (pure) ----------------------------------------------
@@ -76,3 +78,32 @@ def test_filter_values_only_drops_rows_never_mutates_kept_rows():
     assert result == [kept_row]
     assert result[0] is kept_row  # same object, not a copy/mutation
     assert result[0] == original_kept_row  # every field unchanged
+
+
+# --- always_upsert exemption (opp_def_rating is not window-bounded) -----------
+
+def test_always_upsert_features_contains_opp_def_rating():
+    # opp_def_rating drifts across runs (expanding().mean() over all history), so
+    # it must be re-upserted every night to stay exact — not treated as immutable.
+    assert "opp_def_rating" in _ALWAYS_UPSERT_FEATURES
+
+
+def test_filter_values_keeps_old_exempt_feature_but_drops_old_window_feature():
+    cutoff = date(2026, 7, 18)
+    old_exempt = _row(date(2020, 1, 1), feature="opp_def_rating")   # old but exempt: kept
+    old_window = _row(date(2020, 1, 1), feature="pts_avg_5")        # old, not exempt: dropped
+    recent_window = _row(date(2026, 7, 20), feature="hits_avg_5")   # recent: kept
+
+    kept = _filter_values([old_exempt, old_window, recent_window], cutoff,
+                          always_upsert=_ALWAYS_UPSERT_FEATURES)
+
+    assert kept == [old_exempt, recent_window]
+    assert old_window not in kept
+
+
+def test_filter_values_default_has_no_exemption():
+    """Without always_upsert, even opp_def_rating rows follow the date cutoff —
+    the exemption is opt-in, so the existing pure tests stay valid."""
+    cutoff = date(2026, 7, 18)
+    old_opp = _row(date(2020, 1, 1), feature="opp_def_rating")
+    assert _filter_values([old_opp], cutoff) == []

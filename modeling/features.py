@@ -183,11 +183,25 @@ def _incremental_cutoff(today, lookback_days):
     return today - timedelta(days=lookback_days)
 
 
-def _filter_values(values, cutoff):
-    """Pure: keep only rows with as_of_date >= cutoff. Never mutates a kept
-    row — just drops the ones outside the incremental window.
+# Features whose value has an UNBOUNDED retroactive dependency, so they cannot be
+# treated as immutable outside the lookback window. opp_def_rating is a per-team
+# shift(1).expanding().mean() over the team's ENTIRE history (not a fixed window,
+# not reset per season), so a late-arriving stat for any prior game shifts every
+# later value however old. Verified 2026-07-25: the 19 window/schedule features
+# re-derive 100% identical across runs; opp_def_rating only ~42%. These are always
+# re-upserted (still cheap — one feature, ~1 row per player-game) so the
+# incremental upsert stays EXACT for every feature. opp_def_rating feeds only the
+# model pipeline, never the market-ranked builder.
+_ALWAYS_UPSERT_FEATURES = frozenset({"opp_def_rating"})
+
+
+def _filter_values(values, cutoff, always_upsert=frozenset()):
+    """Pure: keep rows with as_of_date >= cutoff, PLUS any row whose feature is
+    in `always_upsert` (regardless of date). Never mutates a kept row — just
+    drops immutable rows outside the incremental window.
     """
-    return [row for row in values if row["as_of_date"] >= cutoff]
+    return [row for row in values
+            if row["as_of_date"] >= cutoff or row["feature"] in always_upsert]
 
 
 def compute_features(engine, sport="nba", upcoming_days=0, lookback_days=7, full=False):
@@ -200,8 +214,9 @@ def compute_features(engine, sport="nba", upcoming_days=0, lookback_days=7, full
     default: rows with as_of_date older than `lookback_days` are immutable
     (a past game's rolling features never change once played) and already
     stored, so skipping them avoids re-writing ~2.3M unchanged rows nightly.
-    Pass full=True to force upserting every computed row (e.g. a one-time
-    rebuild or a periodic safety net).
+    (opp_def_rating is exempt and always re-upserted — its value is not
+    window-bounded; see _ALWAYS_UPSERT_FEATURES.) Pass full=True to force
+    upserting every computed row (e.g. a one-time rebuild).
     """
     config = SPORT_CONFIG[sport]
     windows = config["windows"]
@@ -251,7 +266,7 @@ def compute_features(engine, sport="nba", upcoming_days=0, lookback_days=7, full
     total_computed = len(values)
     if not full:
         cutoff = _incremental_cutoff(date.today(), lookback_days)
-        values = _filter_values(values, cutoff)
+        values = _filter_values(values, cutoff, _ALWAYS_UPSERT_FEATURES)
 
     if values:
         with engine.begin() as conn:
