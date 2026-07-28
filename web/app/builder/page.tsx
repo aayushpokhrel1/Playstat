@@ -1,51 +1,28 @@
 import Link from "next/link";
-import { getBuilderRecord, getSavedBuilderParlays, type BuilderRecord } from "../lib/api";
+import { getBuilderRecord, getBuilderRecordDaily, getSavedBuilderParlays } from "../lib/api";
 import BuilderControls from "./BuilderControls";
 import ConstructionList from "./ConstructionList";
+import RecordPanel from "./RecordPanel";
 import RetryButton from "./RetryButton";
 import styles from "./builder.module.css";
-
-const TIER_LABELS: Record<BuilderRecord["tier"], string> = {
-  player: "Player",
-  team: "Team",
-};
-
-function formatUnits(value: number): string {
-  if (value === 0) return "0.00u";
-  const sign = value > 0 ? "+" : "−";
-  return `${sign}${Math.abs(value).toFixed(2)}u`;
-}
-
-function formatRoi(value: number): string {
-  const pct = value * 100;
-  if (pct === 0) return "ROI 0.0%";
-  const sign = pct > 0 ? "+" : "−";
-  return `ROI ${sign}${Math.abs(pct).toFixed(1)}%`;
-}
-
-function tierTargetLabel(row: BuilderRecord): string {
-  return `${TIER_LABELS[row.tier] ?? row.tier} ${row.target_payout.toFixed(1)}x`;
-}
 
 export default async function BuilderPage() {
   let saved;
   let teamSaved;
   let builderRecord;
+  let builderRecordDaily;
   let fetchError: string | null = null;
 
   try {
-    [saved, teamSaved, builderRecord] = await Promise.all([
+    [saved, teamSaved, builderRecord, builderRecordDaily] = await Promise.all([
       getSavedBuilderParlays(10, "player"),
       getSavedBuilderParlays(10, "team"),
       getBuilderRecord(),
+      getBuilderRecordDaily(),
     ]);
   } catch {
     fetchError = "Can't reach the Playstat API at localhost:8000. Make sure the service is running.";
   }
-
-  const builderRecordRows = builderRecord ?? [];
-  const hasBuilderRecord = builderRecordRows.length > 0;
-  const hasTeamRows = builderRecordRows.some((row) => row.tier === "team");
 
   return (
     <main className={styles.root}>
@@ -73,37 +50,7 @@ export default async function BuilderPage() {
         ) : (
           <>
             <section className={styles.section} aria-label="Betting record (paper)">
-              {hasBuilderRecord ? (
-                <div className={styles.recordTable}>
-                  {builderRecordRows.map((row) => (
-                    <div key={`${row.tier}-${row.target_payout}`} className={styles.recordRow}>
-                      <span className={styles.recordLabel}>{tierTargetLabel(row)}</span>
-                      <span className={styles.recordFigure}>
-                        {row.wins}-{row.losses}-{row.pushes}
-                      </span>
-                      <span className={styles.recordFigure}>{formatUnits(row.pnl)}</span>
-                      <span className={styles.recordFigure}>{formatRoi(row.roi)}</span>
-                      <span className={styles.recordMeta}>n={row.n}</span>
-                    </div>
-                  ))}
-                  {!hasTeamRows && (
-                    <div className={styles.recordRowEmpty}>
-                      <span className={styles.recordCopy}>
-                        Team — no settled team parlays yet —
-                      </span>
-                    </div>
-                  )}
-                  <p className={styles.recordCaption}>Paper trading only — not a real bet.</p>
-                </div>
-              ) : (
-                <div className={styles.recordStrip}>
-                  <span className={styles.recordFigure}>0-0-0 · n=0</span>
-                  <span className={styles.recordCopy}>
-                    No settled builder parlays yet — the record starts once tonight&apos;s
-                    slate finishes.
-                  </span>
-                </div>
-              )}
+              <RecordPanel rows={builderRecord ?? []} daily={builderRecordDaily ?? []} />
             </section>
 
             <section className={styles.section} aria-label="How to read this">

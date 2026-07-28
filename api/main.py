@@ -13,6 +13,7 @@ from api.schemas import (
     BoxScoreOut,
     BuilderLegOut,
     BuilderParlayOut,
+    BuilderRecordDailyOut,
     BuilderRecordOut,
     BuilderSearchOut,
     ClvSummaryOut,
@@ -668,6 +669,46 @@ def builder_record():
             """
         )).fetchall()
     return _shape_builder_record(rows)
+
+
+def _shape_builder_record_daily(rows):
+    """Pure: rows are (slate_date, n, wins, losses, pushes, pnl) as produced
+    by the GROUP BY date(pr.created_at) in builder_record_daily() below.
+    Computes roi=pnl/n (0.0 when n==0), casts Decimal pnl to float, and
+    stringifies the date. Rows already arrive newest-first from the SQL
+    ORDER BY, and that order is preserved here. DB-free and unit-testable
+    without a database.
+    """
+    shaped = []
+    for slate_date, n, wins, losses, pushes, pnl in rows:
+        n = int(n)
+        pnl = float(pnl or 0)
+        shaped.append(
+            BuilderRecordDailyOut(
+                date=str(slate_date), n=n, wins=int(wins), losses=int(losses),
+                pushes=int(pushes), pnl=pnl, roi=(pnl / n if n else 0.0),
+            )
+        )
+    return shaped
+
+
+@app.get("/parlay-builder/record/daily", response_model=list[BuilderRecordDailyOut])
+def builder_record_daily():
+    """Per-day drill-down of the builder record (README §15 follow-on):
+    same settled-builder data as /parlay-builder/record, grouped by slate
+    date instead of tier/target_payout. Newest date first. Dashboard-only;
+    /bet-performance is unchanged and still feeds web/app/clv."""
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            """
+            SELECT date(pr.created_at) AS slate_date, count(*) n,
+                   sum((ro.result='win')::int) wins, sum((ro.result='loss')::int) losses,
+                   sum((ro.result='push')::int) pushes, sum(ro.pnl) pnl
+            FROM recommendation_outcomes ro JOIN parlay_recommendations pr ON pr.parlay_id=ro.parlay_id
+            WHERE pr.kind='builder' GROUP BY 1 ORDER BY 1 DESC
+            """
+        )).fetchall()
+    return _shape_builder_record_daily(rows)
 
 
 @app.get("/clv-summary", response_model=list[ClvSummaryOut])

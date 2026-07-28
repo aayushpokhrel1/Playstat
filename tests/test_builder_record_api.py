@@ -17,7 +17,7 @@ the SQLAlchemy engine, monkeypatched over api_main.engine.
 from decimal import Decimal
 
 import api.main as api_main
-from api.schemas import BuilderRecordOut
+from api.schemas import BuilderRecordDailyOut, BuilderRecordOut
 
 
 # --- _shape_builder_record: the pure row -> BuilderRecordOut helper --------
@@ -147,3 +147,77 @@ def test_endpoint_empty_queue_returns_empty_list(monkeypatch):
     monkeypatch.setattr(api_main, "engine", fake_engine)
 
     assert api_main.builder_record() == []
+
+
+# --- _shape_builder_record_daily: the pure per-day helper (Phase 2) --------
+
+
+def test_daily_roi_is_pnl_over_n():
+    rows = [("2026-07-27", 26, 12, 12, 2, -5.21)]
+    out = api_main._shape_builder_record_daily(rows)
+    assert len(out) == 1
+    assert out[0].date == "2026-07-27"
+    assert out[0].roi == -5.21 / 26
+
+
+def test_daily_roi_is_zero_when_n_is_zero():
+    rows = [("2026-07-27", 0, 0, 0, 0, 0.0)]
+    out = api_main._shape_builder_record_daily(rows)
+    assert out[0].roi == 0.0
+
+
+def test_daily_preserves_newest_first_order():
+    # The SQL side does ORDER BY 1 DESC; the pure helper must not re-sort.
+    rows = [
+        ("2026-07-27", 10, 7, 3, 0, 9.59),
+        ("2026-07-26", 8, 5, 2, 1, 1.20),
+        ("2026-07-25", 7, 6, 1, 0, 4.10),
+    ]
+    out = api_main._shape_builder_record_daily(rows)
+    assert [r.date for r in out] == ["2026-07-27", "2026-07-26", "2026-07-25"]
+
+
+def test_daily_decimal_pnl_becomes_float():
+    rows = [("2026-07-27", 25, 18, 6, 1, Decimal("-0.14"))]
+    out = api_main._shape_builder_record_daily(rows)
+    assert out[0].pnl == -0.14
+    assert isinstance(out[0].pnl, float)
+
+
+def test_daily_date_object_becomes_string():
+    from datetime import date as date_type
+
+    rows = [(date_type(2026, 7, 27), 25, 18, 6, 1, -0.14)]
+    out = api_main._shape_builder_record_daily(rows)
+    assert out[0].date == "2026-07-27"
+
+
+def test_daily_empty_rows_returns_empty_list():
+    assert api_main._shape_builder_record_daily([]) == []
+
+
+# --- endpoint test: api_main.builder_record_daily() -------------------------
+
+
+def test_daily_endpoint_shapes_grouped_rows_newest_first(monkeypatch):
+    rows = [
+        ("2026-07-27", 10, 7, 3, 0, Decimal("9.59")),
+        ("2026-07-26", 8, 5, 2, 1, Decimal("1.20")),
+    ]
+    fake_engine = _FakeEngine([rows])
+    monkeypatch.setattr(api_main, "engine", fake_engine)
+
+    results = api_main.builder_record_daily()
+
+    assert len(results) == 2
+    assert all(isinstance(r, BuilderRecordDailyOut) for r in results)
+    assert [r.date for r in results] == ["2026-07-27", "2026-07-26"]
+    assert results[0].pnl == 9.59
+    assert results[0].n == 10
+
+
+def test_daily_endpoint_empty_queue_returns_empty_list(monkeypatch):
+    fake_engine = _FakeEngine([[]])
+    monkeypatch.setattr(api_main, "engine", fake_engine)
+
+    assert api_main.builder_record_daily() == []

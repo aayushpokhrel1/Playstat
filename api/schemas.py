@@ -227,3 +227,18 @@ class BuilderRecordOut(BaseModel):
     pushes: int
     pnl: float
     roi: float           # pnl / n (stake is 1u/parlay); 0.0 when n == 0
+
+
+class BuilderRecordDailyOut(BaseModel):
+    """Per-day drill-down of the builder record (README §15 follow-on):
+    same settled-builder data as BuilderRecordOut, grouped by slate date
+    (date(pr.created_at)) instead of tier/target_payout. Newest date first.
+    """
+
+    date: str
+    n: int
+    wins: int
+    losses: int
+    pushes: int
+    pnl: float
+    roi: float           # pnl / n; 0.0 when n == 0

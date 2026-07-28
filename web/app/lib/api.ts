@@ -145,6 +145,16 @@ export type BuilderRecord = {
   roi: number;
 };
 
+export type BuilderRecordDaily = {
+  date: string;
+  n: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  pnl: number;
+  roi: number;
+};
+
 export type BuilderSearchParams = {
   target_payout?: number;
   min_prob?: number;
@@ -220,6 +230,11 @@ export function getBetPerformance() {
 // /bet-performance is unchanged and still feeds web/app/clv.
 export function getBuilderRecord() {
   return apiGet<BuilderRecord[]>("/parlay-builder/record");
+}
+
+// Per-day drill-down of the same settled-builder data (README §15 follow-on).
+export function getBuilderRecordDaily() {
+  return apiGet<BuilderRecordDaily[]>("/parlay-builder/record/daily");
 }
 
 // tier is additive (README §15 Change 3): "player" is the default and
