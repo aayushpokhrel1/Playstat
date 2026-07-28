@@ -31,7 +31,13 @@ class SportsGameOddsClient:
 
         for attempt in range(1, MAX_RETRIES + 1):
             self._pace()
-            response = self.session.get(url, params=params, timeout=15)
+            try:
+                response = self.session.get(url, params=params, timeout=15)
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+                    continue
+                raise
 
             if response.status_code == 429 and attempt < MAX_RETRIES:
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)

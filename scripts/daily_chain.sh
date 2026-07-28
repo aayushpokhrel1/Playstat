@@ -101,10 +101,16 @@ run_chain() {
 	# before we optimize. It preserves && short-circuit: it returns the wrapped
 	# command's exit code, so a failing step still stops the chain.
 	_step() { local n="$1"; shift; local s; s=$(date +%s); "$@"; local r=$?; echo "=== step $n: $(( $(date +%s) - s ))s rc=$r ==="; return $r; }
-	_step stats            "$PY" -m ingestion.mlb_backfill --only stats &&
-		_step linescores       "$PY" -m ingestion.mlb_backfill --only linescores &&
-		_step odds             "$PY" -m ingestion.odds_ingest --sport mlb &&
-		_step first_inning     "$PY" -m modeling.first_inning --days 2 &&
+	# Network ingestion steps get one delayed re-run: a transient blip (DNS not up
+	# yet at boot, a mid-fetch connection drop) can outlast Layer 1's client-level
+	# retries but usually clears within two minutes. Compute/model steps below stay
+	# on the plain fail-fast _step — auto-re-running a real data bug or a 64-min
+	# backtest is wrong.
+	_step_retry() { local n="$1"; shift; _step "$n" "$@" && return 0; local r=$?; echo "=== step $n: retrying after ${r} in 120s ==="; sleep 120; _step "$n" "$@"; return $?; }
+	_step_retry stats       "$PY" -m ingestion.mlb_backfill --only stats &&
+		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
+		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
+		_step_retry first_inning "$PY" -m modeling.first_inning --days 2 &&
 		_step builder_1.4      "$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
 		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
 		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
