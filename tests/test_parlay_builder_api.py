@@ -18,8 +18,13 @@ class _FakeResult:
 
 
 class _FakeConn:
-    def __init__(self, rows):
-        self._rows = rows
+    """Pops one canned result set per .execute() call, in call order --
+    matches the docs/superpowers/plans/2026-07-28-leg-team-names.md
+    enrichment, which now issues additional (batched) games/players queries
+    after the main row query."""
+
+    def __init__(self, queue):
+        self._queue = queue
 
     def __enter__(self):
         return self
@@ -28,19 +33,19 @@ class _FakeConn:
         return False
 
     def execute(self, *args, **kwargs):
-        return _FakeResult(self._rows)
+        return _FakeResult(self._queue.pop(0))
 
 
 class _FakeEngine:
-    def __init__(self, rows):
-        self._rows = rows
+    def __init__(self, results_sequence):
+        self._queue = list(results_sequence)
 
     def begin(self):
-        return _FakeConn(self._rows)
+        return _FakeConn(self._queue)
 
 
-def _fake_engine(rows):
-    return _FakeEngine(rows)
+def _fake_engine(results_sequence):
+    return _FakeEngine(results_sequence)
 
 
 def test_saved_builder_reads_only_builder_rows_and_unwraps_dict(monkeypatch):
@@ -55,7 +60,16 @@ def test_saved_builder_reads_only_builder_rows_and_unwraps_dict(monkeypatch):
              "label": "first_inning_runs under 0.5", "market_prob": 0.60, "model_prob": None},
         ]},
     )
-    monkeypatch.setattr(main, "engine", _fake_engine([builder_row]))
+    # Query order: main row query, THEN the batched games query (game_ids
+    # {1, 2}), THEN the batched players query (player_ids {10}).
+    games_rows = [
+        (1, 900, 901, "Team Home One", "Team Away One"),
+        (2, 902, 903, "Team Home Two", "Team Away Two"),
+    ]
+    players_rows = [(10, 900)]  # player 10's team_id matches game 1's home_id
+    monkeypatch.setattr(
+        main, "engine", _fake_engine([[builder_row], games_rows, players_rows])
+    )
 
     out = main.saved_builder_parlays(limit=10)
 
@@ -64,6 +78,12 @@ def test_saved_builder_reads_only_builder_rows_and_unwraps_dict(monkeypatch):
     assert out[0].n_legs == 2
     team_leg = [l for l in out[0].legs if l.kind == "team"][0]
     assert team_leg.player_id is None and team_leg.market == "first_inning_runs"
+    # Team-market leg is game-level: both team names resolved, no player side.
+    assert (team_leg.home_team, team_leg.away_team) == ("Team Home Two", "Team Away Two")
+    assert team_leg.player_team_side is None
+    player_leg = [l for l in out[0].legs if l.kind == "player"][0]
+    assert (player_leg.home_team, player_leg.away_team) == ("Team Home One", "Team Away One")
+    assert player_leg.player_team_side == "home"
 
 
 # --- GET /parlay-builder/saved?tier= (README §15 Change 3) ------------------
@@ -162,6 +182,13 @@ def test_parlay_builder_returns_object_with_truncation_fields(monkeypatch):
          "model_prob": 0.79, "line_value": 0.5, "player_id": 11, "stat_type": "runs", "market": None},
     ]
     monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor: legs)
+    # This endpoint now ALSO resolves team-name context (docs/superpowers/
+    # plans/2026-07-28-leg-team-names.md) via batched games/players queries
+    # -- main.engine MUST be faked here too, or this would open a real
+    # connection to the live production DB (CRITICAL SAFETY).
+    games_rows = [(1, 100, 101, "Home A", "Away A"), (2, 102, 103, "Home B", "Away B")]
+    players_rows = [(10, 100), (11, 103)]
+    monkeypatch.setattr(main, "engine", _fake_engine([games_rows, players_rows]))
 
     out = main.parlay_builder(min_prob=0.5)
 
@@ -171,3 +198,10 @@ def test_parlay_builder_returns_object_with_truncation_fields(monkeypatch):
     assert isinstance(out.nodes_searched, int) and out.nodes_searched > 0
     # No EV/edge field leaked into the payload.
     assert not hasattr(out.constructions[0], "ev")
+    by_game = {leg.game_id: leg for leg in out.constructions[0].legs}
+    assert (by_game[1].home_team, by_game[1].away_team, by_game[1].player_team_side) == (
+        "Home A", "Away A", "home",
+    )
+    assert (by_game[2].home_team, by_game[2].away_team, by_game[2].player_team_side) == (
+        "Home B", "Away B", "away",
+    )

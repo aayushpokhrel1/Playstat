@@ -112,6 +112,9 @@ export type BuilderLeg = {
   odds: number;
   market_prob: number;
   model_prob: number | null;
+  home_team: string | null;
+  away_team: string | null;
+  player_team_side: "home" | "away" | null;
 };
 
 export type BuilderConstruction = {

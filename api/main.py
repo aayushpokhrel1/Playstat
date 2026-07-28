@@ -424,6 +424,86 @@ def _as_legs_list(raw):
     return raw
 
 
+def player_side(player_team_id, home_id, away_id):
+    """Pure: which side of a game a player's (latest-pull) team_id matches.
+
+    `players.team_id` is a "latest pull" (README §15.10 NBA note): a traded
+    player's stored team can differ from the team they played for in THIS
+    game. A stored team_id matching NEITHER side (traded mid-season, stale
+    row, etc.) returns None so callers fall back to an un-emphasized
+    matchup instead of guessing wrong (docs/superpowers/plans/
+    2026-07-28-leg-team-names.md CAVEAT 2).
+    """
+    if player_team_id == home_id:
+        return "home"
+    if player_team_id == away_id:
+        return "away"
+    return None
+
+
+def _resolve_leg_teams(leg, games, players):
+    """Pure: resolve one builder leg's home_team/away_team/player_team_side
+    from batched lookup maps (see _load_builder_team_context for how those
+    maps get built — no DB access happens in this function itself, so it is
+    directly unit-testable with plain dict fixtures).
+
+    games: dict[game_id -> (home_id, away_id, home_name, away_name)]
+    players: dict[player_id -> team_id]
+
+    A leg whose game_id isn't found in `games` (unresolved/missing) leaves
+    all three fields None rather than raising — this context is best-effort
+    enrichment, never required for a leg to render.
+    """
+    game = games.get(leg.get("game_id"))
+    if game is None:
+        return {"home_team": None, "away_team": None, "player_team_side": None}
+    home_id, away_id, home_name, away_name = game
+    side = None
+    player_id = leg.get("player_id")
+    if player_id is not None and player_id in players:
+        side = player_side(players[player_id], home_id, away_id)
+    return {"home_team": home_name, "away_team": away_name, "player_team_side": side}
+
+
+def _load_builder_team_context(engine, game_ids, player_ids):
+    """Batched (no N+1) resolution of game/team + player-team-id context for
+    a set of builder legs. Issues at most two queries — ONE games+teams join
+    over all game_ids, ONE players query over all player-leg player_ids —
+    never one query per leg. Query order is games THEN players (endpoint
+    tests key off this order); either query is skipped entirely when its id
+    set is empty. Returns (games, players) maps for _resolve_leg_teams.
+    """
+    games = {}
+    if game_ids:
+        with engine.begin() as conn:
+            games = {
+                row[0]: (row[1], row[2], row[3], row[4])
+                for row in conn.execute(
+                    text(
+                        """
+                        SELECT g.game_id, g.home_team_id, g.away_team_id,
+                               ht.name AS home, at.name AS away
+                        FROM games g
+                        JOIN teams ht ON ht.team_id = g.home_team_id
+                        JOIN teams at ON at.team_id = g.away_team_id
+                        WHERE g.game_id = ANY(:ids)
+                        """
+                    ),
+                    {"ids": list(game_ids)},
+                ).fetchall()
+            }
+    players = {}
+    if player_ids:
+        with engine.begin() as conn:
+            players = dict(
+                conn.execute(
+                    text("SELECT player_id, team_id FROM players WHERE player_id = ANY(:ids)"),
+                    {"ids": list(player_ids)},
+                ).fetchall()
+            )
+    return games, players
+
+
 @app.get("/parlay-recommendations", response_model=list[ParlayRecommendationOut])
 def list_parlay_recommendations(limit: int = 10):
     with engine.begin() as conn:
@@ -527,6 +607,14 @@ def parlay_builder(
         legs, target_payout=target_payout, tolerance=tolerance, min_prob=min_prob,
         min_legs=min_legs, max_legs=max_legs, top_n=top_n, stats=stats,
     )
+
+    # Team-name context (docs/superpowers/plans/2026-07-28-leg-team-names.md)
+    # — batched, no N+1: gather ids across every construction's legs first.
+    all_legs = [leg for r in results for leg in r["legs"]]
+    game_ids = {leg["game_id"] for leg in all_legs if leg.get("game_id") is not None}
+    player_ids = {leg["player_id"] for leg in all_legs if leg.get("player_id") is not None}
+    games, players = _load_builder_team_context(engine, game_ids, player_ids)
+
     constructions = [
         BuilderParlayOut(
             legs=[
@@ -536,6 +624,7 @@ def parlay_builder(
                     market=leg["market"], side=leg["side"], line=leg["line_value"],
                     odds=leg["american_odds"], market_prob=leg["market_prob"],
                     model_prob=leg["model_prob"],
+                    **_resolve_leg_teams(leg, games, players),
                 )
                 for leg in r["legs"]
             ],
@@ -596,9 +685,24 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player"):
             {"limit": limit, "cls": TIER_TO_CLASS.get(tier)},
         ).fetchall()
 
+    parlays = [(r, _as_legs_list(r[5])) for r in rows]
+
+    # Team-name context (docs/superpowers/plans/2026-07-28-leg-team-names.md)
+    # — batched, no N+1: gather ids across every parlay's legs first. Query
+    # order is main rows (above) THEN games THEN players — see
+    # _load_builder_team_context / tests/test_leg_team_names.py.
+    game_ids = {
+        leg["game_id"] for _, legs_raw in parlays for leg in legs_raw
+        if leg.get("game_id") is not None
+    }
+    player_ids = {
+        leg["player_id"] for _, legs_raw in parlays for leg in legs_raw
+        if leg.get("player_id") is not None
+    }
+    games, players = _load_builder_team_context(engine, game_ids, player_ids)
+
     out = []
-    for r in rows:
-        legs_raw = _as_legs_list(r[5])
+    for r, legs_raw in parlays:
         out.append(
             SavedBuilderParlayOut(
                 parlay_id=r[0], created_at=str(r[1]), target_payout=float(r[2]),
@@ -610,6 +714,7 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player"):
                         market=leg.get("market"), side=leg["side"], line=leg["line"],
                         odds=leg["odds"], market_prob=leg["market_prob"],
                         model_prob=leg.get("model_prob"),
+                        **_resolve_leg_teams(leg, games, players),
                     )
                     for leg in legs_raw
                 ],

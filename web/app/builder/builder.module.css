@@ -483,6 +483,17 @@
   min-width: 0;
 }
 
+.legMatchup {
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.01em;
+}
+
+.legMatchupTeam {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .legLabel {
   color: var(--ink);
   font-size: 0.9375rem;

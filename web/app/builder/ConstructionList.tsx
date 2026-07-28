@@ -1,4 +1,5 @@
-import type { BuilderConstruction } from "../lib/api";
+import type { BuilderConstruction, BuilderLeg } from "../lib/api";
+import { nickname } from "../lib/teamNames";
 import styles from "./builder.module.css";
 
 function formatOdds(odds: number): string {
@@ -7,6 +8,35 @@ function formatOdds(odds: number): string {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+// Matchup line rendered above leg.label (docs/superpowers/plans/
+// 2026-07-28-leg-team-names.md):
+// - Player leg with a resolved player_team_side: player's own team first and
+//   bold, then the opponent -- `**{team}** vs {opponent}`.
+// - Team leg, or a player leg whose side didn't resolve (traded/unknown):
+//   plain matchup -- `{away} @ {home}`.
+// - Both team names null (unresolved) -> render nothing.
+function LegMatchup({ leg }: { leg: BuilderLeg }) {
+  const home = nickname(leg.home_team);
+  const away = nickname(leg.away_team);
+  if (home === null && away === null) return null;
+
+  if (leg.player_team_side !== null) {
+    const playerTeam = leg.player_team_side === "home" ? home : away;
+    const oppTeam = leg.player_team_side === "home" ? away : home;
+    return (
+      <span className={styles.legMatchup}>
+        <span className={styles.legMatchupTeam}>{playerTeam}</span> vs {oppTeam}
+      </span>
+    );
+  }
+
+  return (
+    <span className={styles.legMatchup}>
+      {away} @ {home}
+    </span>
+  );
 }
 
 export default function ConstructionList({
@@ -51,6 +81,7 @@ export default function ConstructionList({
             {c.legs.map((leg, j) => (
               <div key={j} className={styles.legRow}>
                 <span className={styles.legName}>
+                  <LegMatchup leg={leg} />
                   <span className={styles.legLabel}>{leg.label}</span>
                   <span className={styles.legSide}>{leg.side}</span>
                 </span>

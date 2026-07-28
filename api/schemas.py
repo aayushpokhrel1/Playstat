@@ -190,6 +190,16 @@ class BuilderLegOut(BaseModel):
     market_prob: float
     # Shown for context only — never used to rank or filter (README §15.3).
     model_prob: float | None = None
+    # Additive team-name context (docs/superpowers/plans/2026-07-28-
+    # leg-team-names.md) — resolved from game_id via a batched games+teams
+    # join, never required for a leg to be valid. Optional with defaults so
+    # every existing shape (Budgerr, etc.) still validates unchanged.
+    home_team: str | None = None   # full name, e.g. "Oakland Athletics"
+    away_team: str | None = None   # full name
+    # "home" | "away" | None — which side the LEG'S player's (latest-pull)
+    # team_id matches. None for team-market legs, and for a traded player
+    # whose stored team_id matches neither side (README §15.10 NBA note).
+    player_team_side: str | None = None
 
 
 class BuilderParlayOut(BaseModel):
