@@ -134,6 +134,17 @@ export type SavedBuilderParlay = BuilderConstruction & {
   target_payout: number;
 };
 
+export type BuilderRecord = {
+  tier: "player" | "team";
+  target_payout: number;
+  n: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  pnl: number;
+  roi: number;
+};
+
 export type BuilderSearchParams = {
   target_payout?: number;
   min_prob?: number;
@@ -203,6 +214,12 @@ export function getClvSummary() {
 
 export function getBetPerformance() {
   return apiGet<BetPerformance[]>("/bet-performance");
+}
+
+// Dashboard-only builder record split by tier + target payout (README §15);
+// /bet-performance is unchanged and still feeds web/app/clv.
+export function getBuilderRecord() {
+  return apiGet<BuilderRecord[]>("/parlay-builder/record");
 }
 
 // tier is additive (README §15 Change 3): "player" is the default and

@@ -212,3 +212,18 @@ class SavedBuilderParlayOut(BuilderParlayOut):
     parlay_id: int
     created_at: str
     target_payout: float
+
+
+class BuilderRecordOut(BaseModel):
+    """Paper-trading builder record split by tier + target payout (README
+    §15) — dashboard-only; /bet-performance and BetPerformanceOut are
+    unchanged and still feed web/app/clv."""
+
+    tier: str            # "player" for across_game, "team" for team_tier
+    target_payout: float
+    n: int
+    wins: int
+    losses: int
+    pushes: int
+    pnl: float
+    roi: float           # pnl / n (stake is 1u/parlay); 0.0 when n == 0

@@ -13,6 +13,7 @@ from api.schemas import (
     BoxScoreOut,
     BuilderLegOut,
     BuilderParlayOut,
+    BuilderRecordOut,
     BuilderSearchOut,
     ClvSummaryOut,
     EdgeDistributionOut,
@@ -614,6 +615,59 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player"):
             )
         )
     return out
+
+
+# reverse of TIER_TO_CLASS: legs->>'class' value -> reporting tier label
+_CLASS_TO_TIER = {"across_game": "player", "team_tier": "team"}
+
+# tier sort key: player=0, team=1, unknown classes sort after both.
+_TIER_SORT_ORDER = {"player": 0, "team": 1}
+
+
+def _shape_builder_record(rows):
+    """Pure: rows are (cls, target_payout, n, wins, losses, pushes, pnl) as
+    produced by the GROUP BY in builder_record() below. Maps cls->tier via
+    _CLASS_TO_TIER, computes roi=pnl/n (0.0 when n==0), casts Decimal
+    target_payout/pnl to float, and orders player-before-team then ascending
+    target_payout. DB-free and unit-testable without a database.
+    """
+    shaped = []
+    for cls, target_payout, n, wins, losses, pushes, pnl in rows:
+        tier = _CLASS_TO_TIER.get(cls, cls)
+        n = int(n)
+        pnl = float(pnl or 0)
+        shaped.append(
+            BuilderRecordOut(
+                tier=tier, target_payout=float(target_payout),
+                n=n, wins=int(wins), losses=int(losses), pushes=int(pushes),
+                pnl=pnl, roi=(pnl / n if n else 0.0),
+            )
+        )
+    shaped.sort(key=lambda r: (_TIER_SORT_ORDER.get(r.tier, 2), r.target_payout))
+    return shaped
+
+
+@app.get("/parlay-builder/record", response_model=list[BuilderRecordOut])
+def builder_record():
+    """Paper-trading builder record split by tier + target payout (README §15).
+    Dashboard-only; /bet-performance is unchanged and still feeds web/app/clv."""
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            """
+            SELECT pr.legs->>'class' AS cls, pr.target_payout,
+                   count(*) AS n,
+                   sum((ro.result='win')::int)  AS wins,
+                   sum((ro.result='loss')::int) AS losses,
+                   sum((ro.result='push')::int) AS pushes,
+                   sum(ro.pnl) AS pnl
+            FROM recommendation_outcomes ro
+            JOIN parlay_recommendations pr ON pr.parlay_id = ro.parlay_id
+            WHERE pr.kind = 'builder'
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+            """
+        )).fetchall()
+    return _shape_builder_record(rows)
 
 
 @app.get("/clv-summary", response_model=list[ClvSummaryOut])
