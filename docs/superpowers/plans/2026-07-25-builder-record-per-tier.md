@@ -78,3 +78,15 @@ uses (inspect it) — never write the live DB, never call the endpoint against
 - `/bet-performance` is unchanged — do not touch it or `web/app/clv/page.tsx`.
 - launchd, `:8000` kickstart, git push, live DB writes. Work in the worktree,
   commit there only. The architect reviews, kickstarts the API, and browser-verifies.
+
+## Follow-on (user-requested 2026-07-25) — per-day drill-down
+
+Phase 2 (after the per-tier/per-target summary above lands): make the record
+region clickable — clicking it opens a section showing **per-day** builder stats
+(each settled slate date: W-L-P, P&L, ROI, optionally per-tier within the day).
+Data: same `recommendation_outcomes ⋈ parlay_recommendations WHERE kind='builder'`
+grouped by `date(pr.created_at)` (the slate date) — a second additive endpoint
+(e.g. `GET /parlay-builder/record/daily`) or a `?by=day` param on the record
+endpoint. Keep it paper-framed and honest about small samples (§15 calibration
+note — early days are noise). Design per DESIGN.md; likely an expandable panel or
+a linked sub-view off the builder page's record region.
