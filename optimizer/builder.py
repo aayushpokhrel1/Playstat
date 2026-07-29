@@ -24,7 +24,7 @@ from optimizer.builder_core import (
 TEAM_MARKETS = ("first_inning_runs", "f5_runs")
 
 
-def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None):
+def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
     """Latest two-sided player prop lines on TODAY'S slate (unfinished games),
     + model_prob context.
 
@@ -33,6 +33,10 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None):
     Without this, futures prop lines can leak games weeks/months out and mix
     a tonight leg with a September leg in the same parlay (README §15.10
     KNOWN ISSUE / §15.9 item 6).
+
+    sport restricts candidate games to `g.sport = sport` (default: "mlb"),
+    so an NFL builder run never pools MLB legs into the same parlay
+    (NFL builder sub-project #2).
     """
     with engine.begin() as conn:
         df = pd.read_sql(
@@ -49,19 +53,20 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None):
                 ) pl
                 JOIN games g ON g.game_id = pl.game_id AND g.status != 'FT'
                     AND g.date = COALESCE(:slate_date, CURRENT_DATE)
+                    AND g.sport = :sport
                 JOIN players p ON p.player_id = pl.player_id
                 LEFT JOIN edges e ON e.player_id = pl.player_id
                     AND e.game_id = pl.game_id AND e.stat_type = pl.stat_type
                 """
             ),
-            conn, params={"slate_date": slate_date},
+            conn, params={"slate_date": slate_date, "sport": sport},
         )
     return _normalize(df, normalize_player_leg, floor)
 
 
-def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None):
+def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
     """Latest two-sided team-market lines on TODAY'S slate (unfinished games),
-    + model_prob context. See load_player_legs for the slate_date rationale.
+    + model_prob context. See load_player_legs for the slate_date/sport rationale.
     """
     with engine.begin() as conn:
         df = pd.read_sql(
@@ -78,10 +83,11 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None):
                 ) gl
                 JOIN games g ON g.game_id = gl.game_id AND g.status != 'FT'
                     AND g.date = COALESCE(:slate_date, CURRENT_DATE)
+                    AND g.sport = :sport
                 LEFT JOIN game_edges ge ON ge.game_id = gl.game_id AND ge.market = gl.market
                 """
             ),
-            conn, params={"markets": list(TEAM_MARKETS), "slate_date": slate_date},
+            conn, params={"markets": list(TEAM_MARKETS), "slate_date": slate_date, "sport": sport},
         )
     return _normalize(df, normalize_team_leg, floor)
 
@@ -98,9 +104,9 @@ def _normalize(df, normalizer, floor):
     return [leg for leg in legs if passes_floor(leg, floor)]
 
 
-def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None):
-    return (load_player_legs(engine, floor, slate_date)
-            + load_team_legs(engine, floor, slate_date))
+def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
+    return (load_player_legs(engine, floor, slate_date, sport)
+            + load_team_legs(engine, floor, slate_date, sport))
 
 
 def save_builds(engine, target_payout, results, parlay_class="across_game"):

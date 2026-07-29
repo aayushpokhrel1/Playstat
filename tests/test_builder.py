@@ -143,3 +143,29 @@ def test_save_builds_defaults_to_across_game_class_unchanged():
     builder.save_builds(engine, 1.4, _one_result("player"))
     blob = json.loads(engine.calls[0]["legs"])
     assert blob["class"] == "across_game"
+
+
+# --- sport filtering (NFL builder sub-project #2) ----------------------------
+
+@pytest.mark.parametrize("fn", [builder.load_player_legs, builder.load_team_legs])
+def test_loaders_have_sport_param_defaulting_to_mlb(fn):
+    sig = inspect.signature(fn)
+    assert "sport" in sig.parameters
+    assert sig.parameters["sport"].default == "mlb"
+
+
+@pytest.mark.parametrize("fn", [builder.load_player_legs, builder.load_team_legs])
+def test_loaders_filter_games_join_by_sport(fn):
+    source = inspect.getsource(fn)
+    assert "g.sport = :sport" in source
+    # slate + FT guards must remain alongside the new sport filter
+    assert "g.date = COALESCE(:slate_date, CURRENT_DATE)" in source
+    assert "g.status != 'FT'" in source
+
+
+def test_load_legs_threads_sport_to_both_loaders():
+    sig = inspect.signature(builder.load_legs)
+    assert sig.parameters["sport"].default == "mlb"
+    source = inspect.getsource(builder.load_legs)
+    assert "load_player_legs(engine, floor, slate_date, sport)" in source
+    assert "load_team_legs(engine, floor, slate_date, sport)" in source
