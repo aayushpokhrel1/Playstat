@@ -24,6 +24,31 @@ export default async function BuilderPage() {
     fetchError = "Can't reach the Playstat API at localhost:8000. Make sure the service is running.";
   }
 
+  // Scope both tiers to the SAME, most-recent slate present in the data. The
+  // team tier is saved sparsely, so without this it can show a days-old slate
+  // under a "Tonight's" heading while the player tier shows today's — the exact
+  // confusion this fixes. Keying off the latest slate PRESENT (not the wall
+  // clock) keeps the freshly-built card visible instead of blanking the page in
+  // the pre-dawn window before the next build runs. created_at is a timestamptz
+  // whose date prefix is ET (-04:00); a plain string compare on that prefix is
+  // correct and needs no timezone math. (The endpoint still returns newest-N
+  // regardless of date — Budgerr relies on that, so this stays client-side.)
+  const slateOf = (p: { created_at: string }) => p.created_at.slice(0, 10);
+  const latestSlate = [...(saved ?? []), ...(teamSaved ?? [])].reduce(
+    (mx, p) => (slateOf(p) > mx ? slateOf(p) : mx),
+    "",
+  );
+  const onLatestSlate = (p: { created_at: string }) => slateOf(p) === latestSlate;
+  const savedLatest = (saved ?? []).filter(onLatestSlate);
+  const teamSavedLatest = (teamSaved ?? []).filter(onLatestSlate);
+  const slateLabel = latestSlate
+    ? new Date(`${latestSlate}T12:00:00`).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "America/New_York",
+      })
+    : null;
+
   return (
     <main className={styles.root}>
       <div className={styles.container}>
@@ -33,9 +58,9 @@ export default async function BuilderPage() {
 
         <div className={styles.header}>
           <h1 className={styles.title}>Parlay Builder</h1>
-          {saved && saved.length > 0 && (
+          {slateLabel && savedLatest.length > 0 && (
             <span className={styles.meta}>
-              {saved.length} saved
+              {slateLabel} slate · {savedLatest.length} saved
             </span>
           )}
         </div>
@@ -76,7 +101,7 @@ export default async function BuilderPage() {
               <div className={styles.sectionHeader}>
                 <h2 className={styles.sectionTitle}>Tonight&apos;s low-risk parlays</h2>
               </div>
-              <BuilderControls initial={saved ?? []} />
+              <BuilderControls initial={savedLatest} />
             </section>
 
             <section className={styles.section} aria-label="Team-market parlays">
@@ -89,7 +114,7 @@ export default async function BuilderPage() {
                 empty on any given night. That&apos;s expected, not a bug.
               </p>
               <ConstructionList
-                constructions={teamSaved ?? []}
+                constructions={teamSavedLatest}
                 emptyTitle="No team-market parlays tonight"
                 emptyBody="NRFI/F5 lines rarely clear the safety floor, so an empty night here is normal — check back tomorrow, or after the next nightly build."
               />
