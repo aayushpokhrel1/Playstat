@@ -81,18 +81,16 @@ run_chain() {
 		eval "$PLAYSTAT_CHAIN_CMD"
 		return $?
 	fi
-	# Order matters (reordered 2026-07-24, README §15.9): the low-risk builder
-	# ranks on de-vigged MARKET odds and needs ONLY games + prop_lines + game_lines
-	# (model_prob is a context-only LEFT JOIN, never used for ranking), so the four
-	# builder --save steps run RIGHT AFTER their two ingestion deps (odds_ingest,
-	# first_inning) and BEFORE the slow model pipeline (features/predict/edges/
-	# backtest, ~7h and growing). This lands the paper card in the morning, pre-game,
-	# instead of mid-afternoon behind the retrain. Trade: the builder runs before
-	# edges, so that day's saved rows carry model_prob=None (dashboard shows
-	# "model: — (not used for ranking)") — acceptable, it never ranks. The model
-	# steps still run afterward to feed the (winding-down) edges. Dependencies held:
-	# odds_ingest precedes first_inning (game_lines) and edges; features precedes
-	# predict precedes edges; settle/clv are independent of the builder.
+	# Order matters (reordered 2026-07-24 §15.9; model pipeline SHELVED 2026-07-29
+	# §16 — see the frozen block below). The low-risk builder ranks on de-vigged
+	# MARKET odds and needs ONLY games + prop_lines + game_lines (model_prob was
+	# always a context-only LEFT JOIN, never used for ranking), so it never depended
+	# on the model steps — dropping them changes nothing about the card. The four
+	# builder --save steps run right after their two ingestion deps (odds_ingest,
+	# first_inning). Saved rows carry model_prob=None (dashboard shows "model: —
+	# (not used for ranking)") — as they already did on the builder's own pre-edges
+	# rows. Dependencies held: odds_ingest precedes first_inning (game_lines);
+	# settle/clv are independent of the builder.
 	# Per-step timing (2026-07-24, README §15.9 item 7 B). Profiling ruled out
 	# feature-compute (~77s) and model-training (~2s/stat) as the cause of the
 	# ~7-8h runtime; the feature UPSERT (2.3M immutable rows) is >10min and a big
@@ -116,11 +114,20 @@ run_chain() {
 		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
 		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
 		_step clv              "$PY" -m modeling.clv &&
-		_step settle           "$PY" -m modeling.settle &&
-		_step features         "$PY" -m modeling.features --sport mlb --upcoming-days 2 &&
-		_step predict          "$PY" -m modeling.predict_upcoming --sport mlb --days 2 &&
-		_step edges            "$PY" -m modeling.edges &&
-		_step backtest         "$PY" -m modeling.backtest --sport mlb
+		_step settle           "$PY" -m modeling.settle
+	# MODEL PIPELINE SHELVED 2026-07-29 (README §16, user-approved 2026-07-28,
+	# Budgerr-coordinated + acked). The four model steps below ran here and are
+	# FROZEN, not deleted — the market-ranked builder ranks on de-vigged MARKET
+	# odds and never used them (model_prob is a context-only LEFT JOIN). Dropping
+	# them cuts ~1.5-2h off the nightly run (backtest alone was ~64min). The
+	# /edges, /game-predictions and /parlay-recommendations endpoints keep serving
+	# their LAST-COMPUTED rows (nothing 404s; they just stop updating). Reversible:
+	# re-append these four steps (chained with && off settle above) to resume.
+	#
+	#	_step features  "$PY" -m modeling.features --sport mlb --upcoming-days 2 &&
+	#	_step predict   "$PY" -m modeling.predict_upcoming --sport mlb --days 2 &&
+	#	_step edges     "$PY" -m modeling.edges &&
+	#	_step backtest  "$PY" -m modeling.backtest --sport mlb
 }
 # The old `optimizer.parlay --target-payout 2.0 --max-legs 3` step lived here and
 # OOM-died (SIGKILL) nightly — 1,060 edges > 3% meant C(1060,3) ~ 198M combinations
