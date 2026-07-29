@@ -138,10 +138,23 @@ def collect_game_rows(event, game_markets):
 
 
 def observed_statid_summary(events, stat_map, game_markets):
-    raise NotImplementedError
+    """Pure: count each over/under odd across events by whether its statID is
+    known (in stat_map, or a configured game-market statID) or unmapped. The
+    reporting core of --dry-run, so the map can be confirmed against the live
+    feed without writing the DB."""
+    game_stat_ids = {stat_id for (stat_id, _entity, _period) in game_markets.values()}
+    mapped, unmapped = {}, {}
+    for event in events:
+        for odd in event.get("odds", {}).values():
+            if odd.get("betTypeID") != "ou":
+                continue
+            stat_id = odd.get("statID")
+            bucket = mapped if (stat_id in stat_map or stat_id in game_stat_ids) else unmapped
+            bucket[stat_id] = bucket.get(stat_id, 0) + 1
+    return {"mapped": mapped, "unmapped": unmapped}
 
 
-def ingest_odds(sport="nba"):
+def ingest_odds(sport="nba", dry_run=False):
     stat_map = STAT_MAPS[sport]
     game_markets = GAME_MARKETS.get(sport, {})
     odds_league_id = SPORTS[sport]["odds_league_id"]
@@ -154,12 +167,31 @@ def ingest_odds(sport="nba"):
         player_index = matching.load_player_index(conn, sport)
         game_index = matching.load_game_index(conn, sport)
 
+    events = list(client.get_events(odds_league_id, odds_available=True))
+
+    if dry_run:
+        summary = observed_statid_summary(events, stat_map, game_markets)
+        print(f"({sport}) DRY RUN — events: {len(events)}")
+        print(f"  mapped statIDs:   {summary['mapped']}")
+        print(f"  UNMAPPED statIDs: {summary['unmapped']}")
+        matched = unmatched_games = 0
+        for event in events:
+            home = event.get("teams", {}).get("home", {}).get("names", {}).get("long")
+            away = event.get("teams", {}).get("away", {}).get("names", {}).get("long")
+            date = matching.utc_start_to_local_date(event.get("status", {}).get("startsAt"))
+            hid, aid = matching.match_team(home, team_index), matching.match_team(away, team_index)
+            gid = matching.match_game(hid, aid, date, game_index) if (hid and aid and date) else None
+            matched += gid is not None
+            unmatched_games += gid is None
+        print(f"  games matched: {matched}, unmatched: {unmatched_games}")
+        return
+
     events_seen = 0
     rows_inserted = 0
     games_unmatched = 0
     players_unmatched = 0
 
-    for event in client.get_events(odds_league_id, odds_available=True):
+    for event in events:
         events_seen += 1
 
         home_name = event.get("teams", {}).get("home", {}).get("names", {}).get("long")
@@ -228,5 +260,7 @@ def ingest_odds(sport="nba"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--sport", choices=list(STAT_MAPS), default="nba")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="fetch and report statID coverage + match rates without writing")
     args = parser.parse_args()
-    ingest_odds(args.sport)
+    ingest_odds(args.sport, dry_run=args.dry_run)
