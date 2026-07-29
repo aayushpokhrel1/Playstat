@@ -183,6 +183,10 @@ def main():
                         help="build from team-market (NRFI/F5) legs only — a dedicated, "
                              "higher-variance team tier (README §15.9 item 5). --save "
                              "writes class=\"team_tier\" instead of \"across_game\".")
+    parser.add_argument("--sport", default="mlb",
+                        help="which sport's candidate legs to build from "
+                             "(default: mlb — the daily chain passes no --sport). "
+                             "nfl builds player-only until the team tier lands (#3).")
     parser.add_argument("--save", action="store_true", help="persist to parlay_recommendations")
     args = parser.parse_args()
 
@@ -191,9 +195,9 @@ def main():
 
     engine = db.get_engine()
     if args.team_only:
-        legs = load_team_legs(engine, args.floor, args.slate_date)
+        legs = load_team_legs(engine, args.floor, args.slate_date, args.sport)
     else:
-        legs = load_legs(engine, args.floor, args.slate_date)
+        legs = load_legs(engine, args.floor, args.slate_date, args.sport)
     print(f"candidate legs (favorite side, market prob >= {args.floor:.0%}): {len(legs)}")
     if not legs:
         print("no candidate legs — nothing to build.")
@@ -221,7 +225,7 @@ def main():
 
     if args.save:
         parlay_class = "team_tier" if args.team_only else "across_game"
-        saved = save_builds(engine, args.target_payout or 0.0, results, parlay_class)
+        saved = save_builds(engine, args.target_payout or 0.0, results, parlay_class, args.sport)
         print(f"parlay_recommendations (kind=builder, class={parlay_class}): "
               f"inserted {saved} rows")
 

@@ -43,8 +43,11 @@ def test_load_legs_threads_slate_date_through_to_both_loaders():
     sig = inspect.signature(builder.load_legs)
     assert sig.parameters["slate_date"].default is None
     source = inspect.getsource(builder.load_legs)
-    assert "load_player_legs(engine, floor, slate_date)" in source
-    assert "load_team_legs(engine, floor, slate_date)" in source
+    # NFL tier #2 threads a trailing `sport` param alongside slate_date (see
+    # test_load_legs_threads_sport_to_both_loaders below) — updated here to
+    # match, same intent: slate_date is still passed positionally to both.
+    assert "load_player_legs(engine, floor, slate_date, sport)" in source
+    assert "load_team_legs(engine, floor, slate_date, sport)" in source
 
 
 def test_main_has_slate_date_and_team_only_cli_flags():
@@ -184,3 +187,14 @@ def test_save_builds_sport_defaults_to_mlb():
     builder.save_builds(engine, 1.4, _one_result("player"))
     blob = json.loads(engine.calls[0]["legs"])
     assert blob["sport"] == "mlb"
+
+
+def test_main_has_sport_flag_defaulting_to_mlb_and_threads_it():
+    source = inspect.getsource(builder.main)
+    assert '"--sport"' in source or "'--sport'" in source
+    assert 'default="mlb"' in source
+    # threaded into loading and saving
+    assert "args.sport" in source
+    assert "load_legs(engine, args.floor, args.slate_date, args.sport)" in source
+    assert "load_team_legs(engine, args.floor, args.slate_date, args.sport)" in source
+    assert ", args.sport)" in source  # save_builds call carries sport last
