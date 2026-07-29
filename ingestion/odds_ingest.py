@@ -36,6 +36,24 @@ STAT_MAPS = {
         "pitching_basesOnBalls": "walks_allowed",
         "pitching_outs": "outs_recorded",
     },
+    # NFL player props. statID keys are PROVISIONAL (SGO NFL feed never hit;
+    # docs ambiguous camel vs snake, MLB map here uses snake) -- confirm via
+    # `odds_ingest --sport nfl --dry-run` against the live feed at preseason.
+    # Values MUST match player_game_stats stat_types (so props are settleable).
+    "nfl": {
+        "passing_yards": "passing_yards",
+        "rushing_yards": "rushing_yards",
+        "receiving_yards": "receiving_yards",
+        "receptions": "receptions",
+        "targets": "targets",
+        "passing_touchdowns": "passing_tds",
+        "rushing_touchdowns": "rushing_tds",
+        "receiving_touchdowns": "receiving_tds",
+        "passing_completions": "completions",
+        "rushing_attempts": "carries",
+        "passing_attempts": "pass_attempts",
+        "interceptions": "interceptions_thrown",
+    },
 }
 
 
@@ -110,6 +128,10 @@ def collect_game_rows(event, game_markets):
             row["line_value"] = odd.get("bookOverUnder")
             row[f"{side}_odds"] = parse_american_odds(odd.get("bookOdds"))
     return list(rows.values())
+
+
+def observed_statid_summary(events, stat_map, game_markets):
+    raise NotImplementedError
 
 
 def ingest_odds(sport="nba"):
