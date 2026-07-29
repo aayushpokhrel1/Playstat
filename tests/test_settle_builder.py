@@ -105,3 +105,34 @@ def test_settle_function_voids_dnp_legs_via_leg_status(fn):
     assert "leg_status(" in source
     assert '"void"' in source
     assert '"dnp": True' in source
+
+
+# --- NFL player legs settle through the same sport-agnostic path (tier #2) ---
+# settle_builder_parlays looks up player_game_stats[(player_id, game_id,
+# stat_type)] and scores over/under vs the line -- nothing MLB-specific. These
+# assert the pure scoring path handles NFL stat_types/lines identically.
+
+def test_builder_leg_key_handles_an_nfl_player_leg():
+    leg = {"kind": "player", "game_id": 200000123, "player_id": 200000045,
+           "stat_type": "passing_yards", "market": None}
+    assert builder_leg_key(leg) == ("player", 200000045, 200000123, "passing_yards")
+
+
+def test_nfl_passing_yards_over_scores_by_the_same_rule():
+    # 290 passing yards clears an over 274.5; 12 rushing yards clears an under 45.5
+    assert settle_leg("over", 290.0, 274.5) == "hit"
+    assert settle_leg("under", 12.0, 45.5) == "hit"
+    assert settle_leg("over", 250.0, 274.5) == "miss"
+
+
+def test_nfl_two_leg_parlay_all_hit_wins():
+    results = [settle_leg("over", 290.0, 274.5), settle_leg("under", 3.0, 6.5)]
+    assert results == ["hit", "hit"]
+    result, _, pnl = parlay_result(results, [1.8, 1.9])
+    assert result == "win"
+    assert pnl == pytest.approx(1.8 * 1.9 - 1.0)
+
+
+def test_nfl_dnp_receiver_leg_voids_like_any_other():
+    # A receiver who didn't play -> FT game, no stat row -> void (dropped).
+    assert leg_status("FT", None) == "void"
