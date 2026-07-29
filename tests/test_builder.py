@@ -169,3 +169,18 @@ def test_load_legs_threads_sport_to_both_loaders():
     source = inspect.getsource(builder.load_legs)
     assert "load_player_legs(engine, floor, slate_date, sport)" in source
     assert "load_team_legs(engine, floor, slate_date, sport)" in source
+
+
+def test_save_builds_stamps_sport_into_blob():
+    engine = _CapturingEngine()
+    builder.save_builds(engine, 2.0, _one_result("player"), sport="nfl")
+    blob = json.loads(engine.calls[0]["legs"])
+    assert blob["sport"] == "nfl"
+    assert blob["class"] == "across_game"  # class still written as before
+
+
+def test_save_builds_sport_defaults_to_mlb():
+    engine = _CapturingEngine()
+    builder.save_builds(engine, 1.4, _one_result("player"))
+    blob = json.loads(engine.calls[0]["legs"])
+    assert blob["sport"] == "mlb"

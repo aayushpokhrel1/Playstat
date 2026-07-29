@@ -109,7 +109,7 @@ def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
             + load_team_legs(engine, floor, slate_date, sport))
 
 
-def save_builds(engine, target_payout, results, parlay_class="across_game"):
+def save_builds(engine, target_payout, results, parlay_class="across_game", sport="mlb"):
     """Persist constructions. No EV/edge field is written — this builder makes no such claim.
 
     parlay_class is written into the legs blob's {"class": ...} wrapper.
@@ -117,6 +117,10 @@ def save_builds(engine, target_payout, results, parlay_class="across_game"):
     dedicated team-only build (--team-only) passes "team_tier" so the saved
     endpoint (api/main.py GET /parlay-builder/saved) can tell the two apart
     (README §15.9 item 5 / §15.10 team-legs note).
+
+    sport is written into the same wrapper as {"sport": ...} (default "mlb").
+    Existing MLB rows predate this field and have no "sport" key; readers
+    treat an absent key as "mlb" (NFL builder sub-project #2).
     """
     rows = 0
     with engine.begin() as conn:
@@ -144,8 +148,8 @@ def save_builds(engine, target_payout, results, parlay_class="across_game"):
                     "tp": target_payout,
                     # allow_nan=False: emit a loud Python error rather than bare
                     # NaN, which is invalid JSON and Postgres rejects downstream.
-                    "legs": json.dumps({"class": parlay_class, "legs": legs_json},
-                                       allow_nan=False),
+                    "legs": json.dumps({"class": parlay_class, "sport": sport,
+                                        "legs": legs_json}, allow_nan=False),
                     "jp": r["joint_prob"],
                     "co": r["combined_odds"],
                 },
