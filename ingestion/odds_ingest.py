@@ -70,6 +70,13 @@ GAME_MARKETS = {
         "first_inning_runs": ("points", "all", "1i"),
         "f5_runs": ("points", "all", "1ix5"),
     },
+    # NFL full-game total (points over/under). Spread/moneyline are home/away
+    # markets that don't fit game_lines' over/under columns -- deferred to
+    # sub-project #3 (schema change + settlement). periodID "game" / statID
+    # "points" / entity "all" confirmed from the MLB game-market pattern.
+    "nfl": {
+        "game_total": ("points", "all", "game"),
+    },
 }
 
 
