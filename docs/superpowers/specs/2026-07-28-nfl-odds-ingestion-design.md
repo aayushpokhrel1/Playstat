@@ -14,11 +14,20 @@ shelve-vs-measure question is a **separate track**, not part of this work.
 
 ## Goal
 
-`odds_ingest --sport nfl` fetches NFL **player-prop and game-level** markets from
-SportsGameOdds (SGO) and writes idempotent rows to `prop_lines` and `game_lines`,
-matched to our existing NFL games/players. This lands the raw odds data the rest
-of the NFL builder consumes. Nothing downstream (tiers, settlement, chain,
-dashboard) is in scope here.
+`odds_ingest --sport nfl` fetches NFL **player-prop and game-total** markets from
+SportsGameOdds (SGO) and **appends snapshot rows** to `prop_lines` and
+`game_lines`, matched to our existing NFL games/players. This lands the raw odds
+data the rest of the NFL builder consumes. Nothing downstream (tiers, settlement,
+chain, dashboard) is in scope here.
+
+**Scope note (refined during planning, user-confirmed 2026-07-28):** `game_lines`
+only has over/under columns (`line_value, over_odds, under_odds`) and
+`collect_game_rows` handles only `betTypeID="ou"`, so **only the full-game total
+(points O/U)** fits today's schema. **Spread and moneyline** are home/away markets
+that need a `game_lines` schema change + collector generalization — deferred to
+**#3**, where their settlement lives. **Append-only, not idempotent:**
+`prop_lines`/`game_lines` are plain INSERTs on purpose — CLV needs multiple
+snapshots per line over time to measure line movement, so each run appends.
 
 ## What already exists (no work)
 
@@ -59,10 +68,11 @@ stat_types**, not the source strings.
 
 ### 2. `GAME_MARKETS['nfl']` — game market → `(statID, statEntityID, periodID)`
 
-Full-game **spread**, **total (points over/under)**, and **moneyline**. Same
-structure as MLB's `GAME_MARKETS['mlb']` (e.g. MLB "1st Inning O/U" is
-`statID=points, statEntityID=all, periodID=1i`). NFL analogues use the full-game
-period; literal IDs pinned during implementation alongside the prop statIDs.
+Full-game **total (points over/under) only** in #1 — spread/moneyline deferred to
+#3 (see Scope note). Same structure as MLB's `GAME_MARKETS['mlb']` (e.g. MLB "1st
+Inning O/U" is `statID=points, statEntityID=all, periodID=1i`); the NFL full-game
+total is the `points`/`all`/`game` over/under. Confirmed from the working MLB code
+that full-game markets use `periodID="game"` and `betTypeID="ou"`.
 
 ### 3. Defensive ingestion (mandatory)
 
@@ -79,7 +89,7 @@ Build both maps **from SGO's NFL market reference now (free, no API quota)**;
 verify against the real feed at preseason. Concretely:
 
 - **`--dry-run` mode**: fetch NFL events and print observed `statID`s, which map /
-  don't map, and player/game **match rates**, WITHOUT writing to the DB. This is
+  don't map, and player/game **match rates**, WITHOUT appending to the DB. This is
   the verification instrument: run it once against the live feed when preseason
   odds appear (~August) to confirm the maps and see name-match quality. It is
   also the safe way to spend a *single* live probe now if we later choose to.
@@ -105,10 +115,11 @@ before Week 1. Team/game matching reuses the existing sport-scoped indexes.
 - **Pure unit tests**, mirroring `tests/test_odds.py`: fixtured SGO NFL event
   payloads → `collect_prop_rows` / `collect_game_rows` produce the correct
   `prop_lines` / `game_lines` rows; an unmapped `statID` is skipped (not raised);
-  a re-run is idempotent (upsert, no dupes); unmatched player names are logged
-  and skipped. No DB, no network (`ingestion.db.get_engine()` is LIVE — never
-  write it from tests; use fixtures / the isolation pattern in the existing
-  odds tests).
+  unmatched player names are logged and skipped. The pure collectors
+  (`collect_prop_rows`/`collect_game_rows`) take `(event, map)` and return rows —
+  no DB, no network, ideal for fixture tests. `ingestion.db.get_engine()` is LIVE
+  — never write it from tests; test the pure collectors directly (the DB write is
+  plain append INSERTs, unchanged from MLB, and not re-tested here).
 - **Live `--dry-run` probe**: deferred to preseason (or run once now only if we
   explicitly choose to spend quota).
 - Settlement is NOT verified here (it's #2/#3).
@@ -116,9 +127,9 @@ before Week 1. Team/game matching reuses the existing sport-scoped indexes.
 ## Done criteria
 
 1. `STAT_MAPS['nfl']` and `GAME_MARKETS['nfl']` exist, covering the 12 prop
-   stat_types + spread/total/moneyline, sourced from SGO's reference.
-2. `odds_ingest --sport nfl` runs clean end-to-end on a fixtured event, writing
-   idempotent `prop_lines` + `game_lines` matched to NFL games/players, and
+   stat_types + the full-game total, sourced from SGO's reference.
+2. `odds_ingest --sport nfl` runs clean end-to-end on a fixtured event, appending
+   `prop_lines` + `game_lines` snapshot rows matched to NFL games/players, and
    skipping unmapped markets / unmatched players with a log line.
 3. `--dry-run` prints observed statIDs + map coverage + match rates without
    writing.
@@ -127,6 +138,8 @@ before Week 1. Team/game matching reuses the existing sport-scoped indexes.
 ## Out of scope (later sub-projects)
 
 - The builder tiers and leg-loading generalization (#2).
-- NFL game-market settlement — spread/total/moneyline `leg_status` (#3).
+- **NFL spread + moneyline ingestion** — needs a `game_lines` schema change +
+  collector generalization; bundled with their settlement in #3.
+- NFL game-market settlement — total/spread/moneyline `leg_status` (#3).
 - NFL chain (weekly cadence) + launchd + dashboard/record surface (#4).
 - Any change to the prediction model (separate track).
