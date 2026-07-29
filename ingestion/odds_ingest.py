@@ -36,23 +36,22 @@ STAT_MAPS = {
         "pitching_basesOnBalls": "walks_allowed",
         "pitching_outs": "outs_recorded",
     },
-    # NFL player props. statID keys are PROVISIONAL (SGO NFL feed never hit;
-    # docs ambiguous camel vs snake, MLB map here uses snake) -- confirm via
-    # `odds_ingest --sport nfl --dry-run` against the live feed at preseason.
+    # NFL player props. statID keys reconciled to the SGO NFL statIDs
+    # LIVE-CONFIRMED 2026-07-15 (README §14.3): SGO's free-tier NFL coverage is
+    # these ~6 markets, NOT the full 12 stat_types we hold actuals for -- it has
+    # no targets/completions/carries/pass_attempts markets, and TDs come as an
+    # anytime `touchdowns` market (no rush/receive split, and no single settleable
+    # actual for it, so excluded here). `receiving_receptions` was in SGO docs but
+    # not live in mid-July -- re-confirm via `odds_ingest --sport nfl --dry-run`
+    # against the live feed at preseason (~August), when more markets may open.
     # Values MUST match player_game_stats stat_types (so props are settleable).
     "nfl": {
         "passing_yards": "passing_yards",
         "rushing_yards": "rushing_yards",
         "receiving_yards": "receiving_yards",
-        "receptions": "receptions",
-        "targets": "targets",
+        "receiving_receptions": "receptions",
         "passing_touchdowns": "passing_tds",
-        "rushing_touchdowns": "rushing_tds",
-        "receiving_touchdowns": "receiving_tds",
-        "passing_completions": "completions",
-        "rushing_attempts": "carries",
-        "passing_attempts": "pass_attempts",
-        "interceptions": "interceptions_thrown",
+        "passing_interceptions": "interceptions_thrown",
     },
 }
 

@@ -21,11 +21,15 @@ def _prop_odd(stat_id, entity, side, line, price):
     }
 
 
-def test_nfl_stat_map_covers_the_twelve_settleable_stat_types():
+def test_nfl_stat_map_covers_sgo_confirmed_settleable_markets():
+    # SGO's live-confirmed NFL prop markets (README §14.3), mapped to our
+    # settleable player_game_stats stat_types. NOT the full 12 -- SGO's
+    # free-tier NFL coverage doesn't include targets/completions/carries/
+    # pass_attempts, and offers anytime `touchdowns` (no settleable single
+    # actual) rather than per-category rush/receive TDs.
     assert set(STAT_MAPS["nfl"].values()) == {
-        "passing_yards", "rushing_yards", "receiving_yards", "receptions",
-        "targets", "passing_tds", "rushing_tds", "receiving_tds",
-        "completions", "carries", "pass_attempts", "interceptions_thrown",
+        "passing_yards", "rushing_yards", "receiving_yards",
+        "receptions", "passing_tds", "interceptions_thrown",
     }
 
 
