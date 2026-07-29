@@ -8,8 +8,9 @@ import inspect
 import pytest
 
 from modeling.settle import (
-    aggregate_bet_performance, bet_type_label, parlay_result, settle_builder_parlays,
-    settle_leg, settle_parlays, settle_team_parlays, single_pnl,
+    aggregate_bet_performance, bet_type_label, game_total, parlay_result, settle_builder_parlays,
+    settle_leg, settle_moneyline_leg, settle_parlays, settle_spread_leg, settle_team_parlays,
+    single_pnl,
 )
 from modeling.edges import devig, odds_to_probability
 from optimizer.parlay import american_to_decimal
@@ -222,3 +223,28 @@ def test_settle_functions_scope_candidates_to_their_own_kind(fn, kind):
     source = inspect.getsource(fn)
     assert f"pr.kind = '{kind}'" in source
     assert "ro.bet_type = 'parlay' AND ro.parlay_id = pr.parlay_id" in source
+
+
+# --- NFL game-market scoring (total/spread/moneyline vs final scores, #3) ---
+
+def test_game_total():
+    assert game_total(27, 17) == 44
+
+
+def test_settle_spread_home_covers_pushes_loses():
+    # home -3.5 (home_line=-3.5), margin 27-17=+10 -> home covers
+    assert settle_spread_leg("home", 27, 17, -3.5) == "won"
+    assert settle_spread_leg("away", 27, 17, -3.5) == "lost"
+    # exact push: home_line=-10, margin 10 -> 0
+    assert settle_spread_leg("home", 27, 17, -10) == "void"
+    assert settle_spread_leg("away", 27, 17, -10) == "void"
+    # away covers: home +3 (home_line=+3), margin -7 -> home -4 -> away wins
+    assert settle_spread_leg("away", 20, 27, 3) == "won"
+
+
+def test_settle_moneyline_winner_and_tie():
+    assert settle_moneyline_leg("home", 27, 17) == "won"
+    assert settle_moneyline_leg("away", 27, 17) == "lost"
+    assert settle_moneyline_leg("away", 17, 27) == "won"
+    assert settle_moneyline_leg("home", 20, 20) == "void"   # tie -> push
+    assert settle_moneyline_leg("away", 20, 20) == "void"
