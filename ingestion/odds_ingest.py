@@ -64,19 +64,31 @@ STAT_MAPS = {
 # our free tier (line ~3.5, over/under quoted across fanduel/bovada/betmgm/draftkings).
 # Unlike NRFI's fixed 0.5 line, F5 lines vary per game — the model derives P(under
 # actual_line) from a predicted mean rather than a single fixed threshold.
+# Field on an SGO odd carrying the spread line for the home/away side.
+# PRESEASON-VERIFY via --dry-run before first live ingest (README #3 spec).
+SPREAD_LINE_FIELD = "bookSpread"
+
 GAME_MARKETS = {
     "mlb": {
         "first_inning_runs": ("points", "all", "1i"),
         "f5_runs": ("points", "all", "1ix5"),
     },
-    # NFL full-game total (points over/under). Spread/moneyline are home/away
-    # markets that don't fit game_lines' over/under columns -- deferred to
-    # sub-project #3 (schema change + settlement). periodID "game" / statID
-    # "points" / entity "all" confirmed from the MLB game-market pattern.
+    # NFL full-game markets: total (over/under), spread + moneyline (home/away,
+    # sub-project #3). All three share statID/entity/period (points/all/game)
+    # and differ only by betTypeID (see bettype_for_market below).
     "nfl": {
-        "game_total": ("points", "all", "game"),
+        "full_game_total":     ("points", "all", "game"),  # betTypeID ou
+        "full_game_spread":    ("points", "all", "game"),  # betTypeID sp
+        "full_game_moneyline": ("points", "all", "game"),  # betTypeID ml
     },
 }
+
+# market name -> SGO betTypeID. Home/away markets use sp/ml; everything else ou.
+_MARKET_BETTYPE = {"full_game_spread": "sp", "full_game_moneyline": "ml"}
+
+
+def bettype_for_market(market):
+    return _MARKET_BETTYPE.get(market, "ou")
 
 
 def parse_american_odds(odds_str):
@@ -118,39 +130,53 @@ def collect_prop_rows(event, stat_map):
 
 
 def collect_game_rows(event, game_markets):
-    """Game-level over/under lines (e.g. first-inning total runs): one row per
-    market with whatever line the book quotes (0.5 NRFI-style is common)."""
+    """Game-level lines. over/under markets (totals) fill over_odds/under_odds +
+    line_value; home/away markets (spread/moneyline) fill home_odds/away_odds,
+    spread carries the HOME line, moneyline has none. Unmapped markets/betTypeIDs
+    are skipped, never raised (defensive ingest, README #1)."""
     rows = {}
     for odd in event.get("odds", {}).values():
         for market, (stat_id, entity_id, period_id) in game_markets.items():
             if (odd.get("statID"), odd.get("statEntityID"), odd.get("periodID")) != (stat_id, entity_id, period_id):
                 continue
-            if odd.get("betTypeID") != "ou":
+            want_bt = bettype_for_market(market)
+            if odd.get("betTypeID") != want_bt:
                 continue
             side = odd.get("sideID")
-            if side not in ("over", "under"):
-                continue
-            row = rows.setdefault(market, {"market": market})
-            row["line_value"] = odd.get("bookOverUnder")
-            row[f"{side}_odds"] = parse_american_odds(odd.get("bookOdds"))
+            price = parse_american_odds(odd.get("bookOdds"))
+            if want_bt == "ou":
+                if side not in ("over", "under"):
+                    continue
+                row = rows.setdefault(market, {"market": market})
+                row["line_value"] = odd.get("bookOverUnder")
+                row[f"{side}_odds"] = price
+            else:  # sp / ml — home/away
+                if side not in ("home", "away"):
+                    continue
+                row = rows.setdefault(market, {"market": market})
+                row[f"{side}_odds"] = price
+                if want_bt == "sp" and side == "home":
+                    row["line_value"] = odd.get(SPREAD_LINE_FIELD)
     return list(rows.values())
 
 
 def observed_statid_summary(events, stat_map, game_markets):
     """Pure: count each over/under odd across events by whether its statID is
-    known (in stat_map, or a configured game-market statID) or unmapped. The
-    reporting core of --dry-run, so the map can be confirmed against the live
-    feed without writing the DB."""
+    known (in stat_map, or a configured game-market statID) or unmapped. Also
+    counts observed betTypeIDs per game-market statID (sp/ml/ou coverage) so
+    --dry-run reveals spread/moneyline coverage without writing the DB."""
     game_stat_ids = {stat_id for (stat_id, _entity, _period) in game_markets.values()}
-    mapped, unmapped = {}, {}
+    mapped, unmapped, bettypes = {}, {}, {}
     for event in events:
         for odd in event.get("odds", {}).values():
-            if odd.get("betTypeID") != "ou":
+            stat_id, bt = odd.get("statID"), odd.get("betTypeID")
+            if stat_id in game_stat_ids:
+                bettypes[(stat_id, bt)] = bettypes.get((stat_id, bt), 0) + 1
+            if bt != "ou":
                 continue
-            stat_id = odd.get("statID")
             bucket = mapped if (stat_id in stat_map or stat_id in game_stat_ids) else unmapped
             bucket[stat_id] = bucket.get(stat_id, 0) + 1
-    return {"mapped": mapped, "unmapped": unmapped}
+    return {"mapped": mapped, "unmapped": unmapped, "bettypes": bettypes}
 
 
 def ingest_odds(sport="nba", dry_run=False):
@@ -173,6 +199,7 @@ def ingest_odds(sport="nba", dry_run=False):
         print(f"({sport}) DRY RUN — events: {len(events)}")
         print(f"  mapped statIDs:   {summary['mapped']}")
         print(f"  UNMAPPED statIDs: {summary['unmapped']}")
+        print(f"  game-market betTypeIDs: {summary['bettypes']}")
         matched = unmatched_games = 0
         for event in events:
             home = event.get("teams", {}).get("home", {}).get("names", {}).get("long")
@@ -216,15 +243,14 @@ def ingest_odds(sport="nba", dry_run=False):
             for row in game_rows:
                 conn.execute(
                     text(
-                        "INSERT INTO game_lines (game_id, market, line_value, over_odds, under_odds) "
-                        "VALUES (:game_id, :market, :line_value, :over_odds, :under_odds)"
+                        "INSERT INTO game_lines (game_id, market, line_value, over_odds, under_odds, home_odds, away_odds) "
+                        "VALUES (:game_id, :market, :line_value, :over_odds, :under_odds, :home_odds, :away_odds)"
                     ),
                     {
-                        "game_id": game_id,
-                        "market": row["market"],
+                        "game_id": game_id, "market": row["market"],
                         "line_value": row.get("line_value"),
-                        "over_odds": row.get("over_odds"),
-                        "under_odds": row.get("under_odds"),
+                        "over_odds": row.get("over_odds"), "under_odds": row.get("under_odds"),
+                        "home_odds": row.get("home_odds"), "away_odds": row.get("away_odds"),
                     },
                 )
                 rows_inserted += 1
