@@ -649,7 +649,7 @@ TIER_TO_CLASS = {"player": "across_game", "team": "team_tier"}
 
 
 @app.get("/parlay-builder/saved", response_model=list[SavedBuilderParlayOut])
-def saved_builder_parlays(limit: int = 10, tier: str = "player"):
+def saved_builder_parlays(limit: int = 10, tier: str = "player", sport: str = "mlb"):
     """The precomputed nightly low-risk builder parlays (kind='builder'), newest
     first. A fast list read (no live search) — this is the endpoint external
     consumers (Budgerr) should use, NOT the live /parlay-builder, which can take
@@ -661,6 +661,12 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player"):
     behaviour — the mixed player+team across-game tier), "team" (the
     dedicated team-only tier, higher-variance NRFI/F5-only constructions,
     may be empty on any given slate), or "all" (no class filter).
+
+    sport is an ADDITIVE filter (default "mlb", NFL builder sub-project #2):
+    existing MLB rows predate the "sport" key in the legs blob, so
+    COALESCE(legs->>'sport', 'mlb') reads a legacy no-key row as "mlb". Budgerr
+    and the MLB dashboard, passing no sport, keep getting exactly MLB rows —
+    unchanged. The NFL dashboard (#4) will pass ?sport=nfl.
     """
     if tier != "all" and tier not in TIER_TO_CLASS:
         raise HTTPException(
@@ -675,6 +681,7 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player"):
                 SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
                 FROM parlay_recommendations
                 WHERE kind = 'builder'
+                AND COALESCE(legs->>'sport', 'mlb') = :sport
                 """
                 + ("" if tier == "all" else "AND legs->>'class' = :cls ")
                 + """
@@ -682,7 +689,7 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player"):
                 LIMIT :limit
                 """
             ),
-            {"limit": limit, "cls": TIER_TO_CLASS.get(tier)},
+            {"limit": limit, "cls": TIER_TO_CLASS.get(tier), "sport": sport},
         ).fetchall()
 
     parlays = [(r, _as_legs_list(r[5])) for r in rows]

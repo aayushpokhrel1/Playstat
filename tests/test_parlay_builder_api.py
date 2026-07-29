@@ -205,3 +205,18 @@ def test_parlay_builder_returns_object_with_truncation_fields(monkeypatch):
     assert (by_game[2].home_team, by_game[2].away_team, by_game[2].player_team_side) == (
         "Home B", "Away B", "away",
     )
+
+
+# --- GET /parlay-builder/saved?sport= (NFL builder sub-project #2) ----------
+
+def test_saved_builder_parlays_has_sport_param_defaulting_to_mlb():
+    import inspect
+    sig = inspect.signature(main.saved_builder_parlays)
+    assert sig.parameters["sport"].default == "mlb"
+
+
+def test_saved_builder_query_filters_by_sport_with_mlb_default_coalesce():
+    import inspect
+    source = inspect.getsource(main.saved_builder_parlays)
+    assert "COALESCE(legs->>'sport', 'mlb') = :sport" in source
+    assert '"sport": sport' in source
