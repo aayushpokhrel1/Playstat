@@ -73,6 +73,75 @@ def test_default_floor_is_055():
     assert DEFAULT_FLOOR == 0.55
 
 
+# --- builder independence: diverse top-N (docs/superpowers/specs/
+# 2026-07-29-builder-independence-design.md) -----------------------------
+
+from optimizer.builder_core import build, entity_of, select_diverse
+
+
+def _con(legs, jp):
+    return {"legs": legs, "joint_prob": jp, "combined_odds": 1.0 + jp}
+
+
+def _pl(pid, gid): return {"kind": "player", "player_id": pid, "game_id": gid}
+def _tm(gid):      return {"kind": "team", "player_id": None, "game_id": gid}
+
+
+def test_entity_of_player_vs_team():
+    assert entity_of(_pl(500, 9)) == 500
+    assert entity_of(_tm(9)) == 9
+
+
+def test_select_diverse_caps_player_reuse():
+    # player 1 in every construction; cap m=2 -> at most 2 selected use player 1
+    results = [_con([_pl(1, g), _pl(2 + i, g + 100)], 0.9 - i * 0.01)
+               for i, g in enumerate([10, 20, 30, 40, 50])]
+    out = select_diverse(results, n=5, max_uses=2)
+    used = sum(1 for c in out if any(entity_of(l) == 1 for l in c["legs"]))
+    assert used == 2
+    assert out[0] is results[0]         # rank-1 always kept
+
+
+def test_select_diverse_m1_is_strict_disjoint():
+    results = [_con([_pl(1, 10), _pl(2, 20)], 0.9),
+               _con([_pl(1, 30), _pl(3, 40)], 0.8),   # reuses player 1 -> excluded
+               _con([_pl(4, 50), _pl(5, 60)], 0.7)]
+    out = select_diverse(results, n=5, max_uses=1)
+    assert [c["joint_prob"] for c in out] == [0.9, 0.7]
+
+
+def test_select_diverse_team_legs_key_on_game():
+    results = [_con([_tm(10)], 0.9), _con([_tm(10)], 0.8), _con([_tm(11)], 0.7)]
+    out = select_diverse(results, n=5, max_uses=1)
+    assert [c["joint_prob"] for c in out] == [0.9, 0.7]
+
+
+def test_select_diverse_returns_fewer_than_n_gracefully():
+    results = [_con([_pl(1, 10)], 0.9), _con([_pl(1, 20)], 0.8)]
+    assert len(select_diverse(results, n=5, max_uses=1)) == 1
+
+
+def _leg(gid, pid, prob, odds):
+    return {"game_id": gid, "player_id": pid, "kind": "player", "stat_type": "x",
+            "side": "over", "line_value": 0.5, "american_odds": odds,
+            "decimal_odds": 1 + prob, "market_prob": prob, "model_prob": None, "market": None}
+
+
+def test_build_max_uses_none_matches_today():
+    legs = [_leg(g, g, 0.8, -150) for g in range(1, 6)]
+    a = build(legs, target_payout=1.4, top_n=5)
+    b = build(legs, target_payout=1.4, top_n=5, max_uses=None)
+    assert [c["joint_prob"] for c in a] == [c["joint_prob"] for c in b]
+
+
+def test_build_cap_reduces_player_reuse():
+    # a dominant favourite (player 99) appears in many top constructions
+    legs = [_leg(1, 99, 0.95, -400)] + [_leg(g, g, 0.75, -120) for g in range(2, 8)]
+    capped = build(legs, target_payout=1.4, top_n=5, max_uses=2)
+    uses99 = sum(1 for c in capped for l in c["legs"] if l["player_id"] == 99)
+    assert uses99 <= 2
+
+
 def test_normalize_player_leg_shape():
     leg = normalize_player_leg({
         "player_id": 7, "game_id": 100, "stat_type": "total_bases",
