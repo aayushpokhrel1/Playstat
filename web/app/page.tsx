@@ -38,12 +38,6 @@ export default async function Home() {
       </div>
       <p style={{ color: "#666" }}>{teams.length} teams, {players.length} players</p>
       <p style={{ marginTop: "0.5rem" }}>
-        <Link href="/edges">View tonight&apos;s edges &rarr;</Link>
-      </p>
-      <p style={{ marginTop: "0.5rem" }}>
-        <Link href="/clv">View model performance &rarr;</Link>
-      </p>
-      <p style={{ marginTop: "0.5rem" }}>
         <Link href="/builder">Build a low-risk parlay &rarr;</Link>
       </p>
 
