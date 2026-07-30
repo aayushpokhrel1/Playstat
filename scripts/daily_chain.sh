@@ -121,6 +121,18 @@ run_chain() {
 			_step nfl_game_1.4    "$PY" -m optimizer.builder --sport nfl --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step nfl_game_2.0    "$PY" -m optimizer.builder --sport nfl --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
 	}
+	# NBA is DAILY (like MLB, no weekly gate) — it plays a single-day slate
+	# (SLATE_WINDOW_DAYS nba=0). Build player + game-tier cards daily; scores +
+	# settle run daily below. Best-effort (see the chain): an NBA failure is logged
+	# but never aborts the MLB chain or pages. Live at season (~October). The score
+	# refresh uses --season current so it always targets the live NBA season.
+	_nba_daily_build() {
+		_step_retry nba_odds  "$PY" -m ingestion.odds_ingest --sport nba &&
+			_step nba_builder_1.4 "$PY" -m optimizer.builder --sport nba --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nba_builder_2.0 "$PY" -m optimizer.builder --sport nba --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nba_game_1.4    "$PY" -m optimizer.builder --sport nba --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nba_game_2.0    "$PY" -m optimizer.builder --sport nba --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
+	}
 	_step_retry stats       "$PY" -m ingestion.mlb_backfill --only stats &&
 		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
 		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
@@ -132,6 +144,8 @@ run_chain() {
 		_step clv              "$PY" -m modeling.clv &&
 		{ _nfl_weekly_build || echo "=== nfl weekly build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry nfl_scores "$PY" -m ingestion.nfl_backfill --only games || echo "=== nfl_scores: FAILED (non-fatal) ==="; } &&
+		{ _nba_daily_build || echo "=== nba daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
+		{ _step_retry nba_scores "$PY" -m ingestion.backfill --sport nba --only games --season current || echo "=== nba_scores: FAILED (non-fatal) ==="; } &&
 		_step settle           "$PY" -m modeling.settle
 	# MODEL PIPELINE SHELVED 2026-07-29 (README §16, user-approved 2026-07-28,
 	# Budgerr-coordinated + acked). The four model steps below ran here and are
