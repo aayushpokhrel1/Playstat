@@ -7,6 +7,7 @@ import styles from "./builder.module.css";
 const TIER_LABELS: Record<BuilderRecord["tier"], string> = {
   player: "Player",
   team: "Team",
+  game: "Game",
 };
 
 function formatUnits(value: number): string {

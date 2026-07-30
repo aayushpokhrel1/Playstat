@@ -31,75 +31,6 @@ export type Prediction = {
   actual: number | null;
 };
 
-export type Edge = {
-  player_id: number;
-  player_name: string;
-  team_id: number | null;
-  game_id: number;
-  date: string;
-  stat_type: string;
-  side: "over" | "under";
-  line_value: number;
-  odds: number;
-  model_prob: number;
-  edge: number;
-};
-
-export type PmfPoint = {
-  k: number;
-  prob: number;
-};
-
-export type EdgeDistribution = {
-  player_id: number;
-  game_id: number;
-  stat_type: string;
-  side: "over" | "under";
-  family: "discrete" | "gaussian";
-  line_value: number;
-  predicted_mean: number;
-  prob_over: number;
-  prob_under: number;
-  pmf: PmfPoint[] | null;
-};
-
-export type ParlayLeg = {
-  player_id: number;
-  player_name: string | null;
-  game_id: number;
-  stat_type: string;
-  side: "over" | "under";
-  model_prob: number;
-  odds: number;
-};
-
-export type ParlayRecommendation = {
-  parlay_id: number;
-  created_at: string;
-  target_payout: number;
-  joint_prob: number;
-  combined_odds: number;
-  legs: ParlayLeg[];
-};
-
-export type ClvSummary = {
-  stat_type: string;
-  n: number;
-  avg_clv: number;
-  pct_positive: number;
-};
-
-export type BetPerformance = {
-  bet_type: string;
-  n: number;
-  wins: number;
-  losses: number;
-  pushes: number;
-  total_staked: number;
-  total_pnl: number;
-  roi: number;
-};
-
 export type BuilderLeg = {
   game_id: number;
   kind: "player" | "team";
@@ -138,7 +69,7 @@ export type SavedBuilderParlay = BuilderConstruction & {
 };
 
 export type BuilderRecord = {
-  tier: "player" | "team";
+  tier: "player" | "team" | "game";
   target_payout: number;
   n: number;
   wins: number;
@@ -209,44 +140,30 @@ export function getPlayerPredictions(playerId: number) {
   return apiGet<Prediction[]>(`/players/${playerId}/predictions`);
 }
 
-export function getEdges() {
-  return apiGet<Edge[]>("/edges");
-}
-
-export function getEdgeDistributions() {
-  return apiGet<EdgeDistribution[]>("/edge-distributions");
-}
-
-export function getParlayRecommendations() {
-  return apiGet<ParlayRecommendation[]>("/parlay-recommendations");
-}
-
-export function getClvSummary() {
-  return apiGet<ClvSummary[]>("/clv-summary");
-}
-
-export function getBetPerformance() {
-  return apiGet<BetPerformance[]>("/bet-performance");
-}
-
-// Dashboard-only builder record split by tier + target payout (README §15);
-// /bet-performance is unchanged and still feeds web/app/clv.
-export function getBuilderRecord() {
-  return apiGet<BuilderRecord[]>("/parlay-builder/record");
+// Dashboard-only builder record split by tier + target payout (README §15).
+// sport is additive (default "mlb", NFL builder chain #4a/#4b) — existing
+// callers passing no sport keep getting exactly MLB rows, unchanged.
+export function getBuilderRecord(sport = "mlb") {
+  return apiGet<BuilderRecord[]>(`/parlay-builder/record?sport=${sport}`);
 }
 
 // Per-day drill-down of the same settled-builder data (README §15 follow-on).
-export function getBuilderRecordDaily() {
-  return apiGet<BuilderRecordDaily[]>("/parlay-builder/record/daily");
+export function getBuilderRecordDaily(sport = "mlb") {
+  return apiGet<BuilderRecordDaily[]>(`/parlay-builder/record/daily?sport=${sport}`);
 }
 
 // tier is additive (README §15 Change 3): "player" is the default and
 // matches today's exact saved shape (the mixed player+team across-game
 // tier); "team" is the new dedicated, higher-variance NRFI/F5-only tier,
-// which may legitimately be empty on any given slate; "all" skips the
-// class filter server-side.
-export function getSavedBuilderParlays(limit = 10, tier: "player" | "team" | "all" = "player") {
-  return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}&tier=${tier}`);
+// which may legitimately be empty on any given slate; "game" is the NFL
+// game-market tier (#4a/#4b); "all" skips the class filter server-side.
+// sport is additive (default "mlb") — existing callers unchanged.
+export function getSavedBuilderParlays(
+  limit = 10,
+  tier: "player" | "team" | "game" | "all" = "player",
+  sport = "mlb",
+) {
+  return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}&tier=${tier}&sport=${sport}`);
 }
 
 export function searchBuilder(params: BuilderSearchParams) {
