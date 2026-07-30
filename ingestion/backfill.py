@@ -12,6 +12,17 @@ from ingestion.config import SPORTS
 DEFAULT_SEASON = "2023-2024"
 LAUNCHD_PLIST_PATH = os.path.expanduser("~/Library/LaunchAgents/com.playstat.backfill.plist")
 
+from datetime import date as _date
+
+
+def current_nba_season(today=None):
+    """API-Sports season label (YYYY-YYYY+1) for the NBA season in progress.
+    NBA runs ~Oct..Jun and is labelled by its START year. Sep..Dec -> this year
+    starts the season; Jan..Aug -> the prior year did."""
+    today = today or _date.today()
+    start = today.year if today.month >= 9 else today.year - 1
+    return f"{start}-{start + 1}"
+
 
 def parse_minutes(min_str):
     """API-Sports basketball reports minutes as "MM:SS" (or just "MM"). Returns float minutes."""
@@ -86,6 +97,28 @@ def backfill_players(client, engine, team_ids, season, sport):
     print(f"players: upserted {total}")
 
 
+NBA_FINAL_STATUSES = {"FT", "AOT"}
+
+
+def is_final(status):
+    return status in NBA_FINAL_STATUSES
+
+
+def nba_team_points_rows(game, game_id, home_team_id, away_team_id):
+    """Pure: final-score rows for team_game_stats. Empty for an unscored game.
+    Each team final points stored as a points actual so settlement reads them
+    like MLB runs_inning_1 / NFL points (mirrors nfl_backfill.team_points_rows)."""
+    scores = game.get("scores") or {}
+    home = (scores.get("home") or {}).get("total")
+    away = (scores.get("away") or {}).get("total")
+    if home is None or away is None:
+        return []
+    return [
+        {"team_id": home_team_id, "game_id": game_id, "stat_type": "points", "value": int(home)},
+        {"team_id": away_team_id, "game_id": game_id, "stat_type": "points", "value": int(away)},
+    ]
+
+
 def backfill_games(client, engine, season, sport):
     offset = SPORTS[sport]["id_offset"]
     all_games = client.get("/games", params={"league": SPORTS[sport]["league_id"], "season": season})
@@ -96,7 +129,7 @@ def backfill_games(client, engine, season, sport):
         if g["teams"]["home"]["name"] not in CONFERENCE_PLACEHOLDER_NAMES
         and g["teams"]["away"]["name"] not in CONFERENCE_PLACEHOLDER_NAMES
     ]
-    finished = [g for g in games if (g.get("status") or {}).get("short") == "FT"]
+    finished = [g for g in games if is_final((g.get("status") or {}).get("short"))]
 
     with engine.begin() as conn:
         for game in games:
@@ -113,6 +146,14 @@ def backfill_games(client, engine, season, sport):
                     "status": (game.get("status") or {}).get("short"),
                 },
             )
+            if is_final((game.get("status") or {}).get("short")):
+                for pr in nba_team_points_rows(
+                    game,
+                    game["id"] + offset,
+                    game["teams"]["home"]["id"] + offset,
+                    game["teams"]["away"]["id"] + offset,
+                ):
+                    db.upsert(conn, "team_game_stats", ["team_id", "game_id", "stat_type"], pr)
     print(f"games: upserted {len(games)} ({len(finished)} finished)")
     return finished
 
@@ -174,6 +215,7 @@ def main():
     parser.add_argument("--season", default=DEFAULT_SEASON, help="e.g. 2023-2024")
     parser.add_argument("--sport", choices=list(STAT_EXTRACTORS), default="nba")
     args = parser.parse_args()
+    season = current_nba_season() if args.season == "current" else args.season
 
     client = APISportsClient(args.sport)
     engine = db.get_engine()
@@ -183,7 +225,7 @@ def main():
         finished_games = None
 
         if args.only in ("teams", "players", "all"):
-            team_ids = backfill_teams(client, engine, args.season, args.sport)
+            team_ids = backfill_teams(client, engine, season, args.sport)
 
         if args.only in ("players", "all"):
             if team_ids is None:
@@ -195,10 +237,10 @@ def main():
                             {"sport": args.sport},
                         ).fetchall()
                     ]
-            backfill_players(client, engine, team_ids, args.season, args.sport)
+            backfill_players(client, engine, team_ids, season, args.sport)
 
         if args.only in ("games", "stats", "all"):
-            finished_games = backfill_games(client, engine, args.season, args.sport)
+            finished_games = backfill_games(client, engine, season, args.sport)
 
         if args.only in ("stats", "all"):
             if finished_games is None:
