@@ -33,7 +33,7 @@ def test_slate_date_defaults_to_none(fn):
 @pytest.mark.parametrize("fn", [builder.load_player_legs, builder.load_team_legs])
 def test_games_join_has_date_predicate_defaulting_to_current_date(fn):
     source = inspect.getsource(fn)
-    assert "g.date = COALESCE(:slate_date, CURRENT_DATE)" in source
+    assert "g.date BETWEEN COALESCE(:slate_date, CURRENT_DATE)" in source
     # The pre-existing FT guard must stay — slate window is additive, not a
     # replacement for the not-yet-finished-games filter.
     assert "g.status != 'FT'" in source
@@ -44,10 +44,11 @@ def test_load_legs_threads_slate_date_through_to_both_loaders():
     assert sig.parameters["slate_date"].default is None
     source = inspect.getsource(builder.load_legs)
     # NFL tier #2 threads a trailing `sport` param alongside slate_date (see
-    # test_load_legs_threads_sport_to_both_loaders below) — updated here to
-    # match, same intent: slate_date is still passed positionally to both.
-    assert "load_player_legs(engine, floor, slate_date, sport)" in source
-    assert "load_team_legs(engine, floor, slate_date, sport)" in source
+    # test_load_legs_threads_sport_to_both_loaders below); NFL chain #4a adds a
+    # further trailing `window_days` param — updated here to match, same intent:
+    # slate_date is still passed positionally to both.
+    assert "load_player_legs(engine, floor, slate_date, sport, window_days)" in source
+    assert "load_team_legs(engine, floor, slate_date, sport, window_days)" in source
 
 
 def test_main_has_slate_date_and_team_only_cli_flags():
@@ -162,7 +163,7 @@ def test_loaders_filter_games_join_by_sport(fn):
     source = inspect.getsource(fn)
     assert "g.sport = :sport" in source
     # slate + FT guards must remain alongside the new sport filter
-    assert "g.date = COALESCE(:slate_date, CURRENT_DATE)" in source
+    assert "g.date BETWEEN COALESCE(:slate_date, CURRENT_DATE)" in source
     assert "g.status != 'FT'" in source
 
 
@@ -170,8 +171,8 @@ def test_load_legs_threads_sport_to_both_loaders():
     sig = inspect.signature(builder.load_legs)
     assert sig.parameters["sport"].default == "mlb"
     source = inspect.getsource(builder.load_legs)
-    assert "load_player_legs(engine, floor, slate_date, sport)" in source
-    assert "load_team_legs(engine, floor, slate_date, sport)" in source
+    assert "load_player_legs(engine, floor, slate_date, sport, window_days)" in source
+    assert "load_team_legs(engine, floor, slate_date, sport, window_days)" in source
 
 
 def test_save_builds_stamps_sport_into_blob():
@@ -195,9 +196,65 @@ def test_main_has_sport_flag_defaulting_to_mlb_and_threads_it():
     assert 'default="mlb"' in source
     # threaded into loading and saving
     assert "args.sport" in source
-    assert "load_legs(engine, args.floor, args.slate_date, args.sport)" in source
-    assert "load_team_legs(engine, args.floor, args.slate_date, args.sport)" in source
+    assert "load_legs(engine, args.floor, args.slate_date, args.sport, window_days)" in source
+    assert "load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)" in source
     assert ", args.sport)" in source  # save_builds call carries sport last
+
+
+# --- per-sport slate window (NFL builder chain #4a) --------------------------
+
+def test_slate_window_days_map_has_mlb_zero_nfl_four():
+    assert builder.SLATE_WINDOW_DAYS["mlb"] == 0
+    assert builder.SLATE_WINDOW_DAYS["nfl"] == 4
+
+
+@pytest.mark.parametrize("fn", [builder.load_player_legs, builder.load_team_legs, builder.load_legs])
+def test_loaders_have_window_days_param_defaulting_to_zero(fn):
+    sig = inspect.signature(fn)
+    assert "window_days" in sig.parameters
+    assert sig.parameters["window_days"].default == 0
+
+
+@pytest.mark.parametrize("fn", [builder.load_player_legs, builder.load_team_legs])
+def test_loaders_thread_window_days_into_query_params(fn):
+    src = inspect.getsource(fn)
+    # upper bound of the BETWEEN range uses the bound param
+    assert "COALESCE(:slate_date, CURRENT_DATE) + :window_days" in src
+    assert '"window_days": window_days' in src
+
+
+def _fake_build_with_stats(*a, **k):
+    # main() reads stats['candidate_games'/'nodes'/'matches'/'truncated'] after
+    # the call (see test_cli_max_leg_reuse_threads_into_build) — populate them
+    # like the real build() does, since this fake replaces it entirely.
+    if k.get("stats") is not None:
+        k["stats"].update({"candidate_games": 0, "nodes": 0, "matches": 0, "truncated": False})
+    return []
+
+
+def test_main_resolves_window_days_from_sport(monkeypatch):
+    # --sport nfl with no --window-days -> build() gets window_days from the map (4)
+    captured = {}
+    monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
+    monkeypatch.setattr("optimizer.builder.load_legs",
+                        lambda engine, floor, slate_date, sport, window_days: captured.update(window_days=window_days) or [{"x": 1}])
+    monkeypatch.setattr("optimizer.builder.build", _fake_build_with_stats)
+    monkeypatch.setattr("sys.argv", ["builder", "--target-payout", "1.4", "--sport", "nfl"])
+    from optimizer.builder import main
+    main()
+    assert captured["window_days"] == 4
+
+
+def test_main_window_days_flag_overrides_sport_default(monkeypatch):
+    captured = {}
+    monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
+    monkeypatch.setattr("optimizer.builder.load_legs",
+                        lambda engine, floor, slate_date, sport, window_days: captured.update(window_days=window_days) or [{"x": 1}])
+    monkeypatch.setattr("optimizer.builder.build", _fake_build_with_stats)
+    monkeypatch.setattr("sys.argv", ["builder", "--target-payout", "1.4", "--sport", "nfl", "--window-days", "0"])
+    from optimizer.builder import main
+    main()
+    assert captured["window_days"] == 0
 
 
 # --- per-sport game-market tier (NFL builder sub-project #3) -----------------

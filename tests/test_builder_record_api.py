@@ -221,3 +221,64 @@ def test_daily_endpoint_empty_queue_returns_empty_list(monkeypatch):
     monkeypatch.setattr(api_main, "engine", fake_engine)
 
     assert api_main.builder_record_daily() == []
+
+
+# --- ?sport filter (NFL builder chain #4a) -----------------------------------
+
+import inspect
+
+
+def test_record_endpoints_have_sport_param_defaulting_to_mlb():
+    for fn in (api_main.builder_record, api_main.builder_record_daily):
+        sig = inspect.signature(fn)
+        assert sig.parameters["sport"].default == "mlb"
+
+
+def test_record_sql_has_sport_coalesce_filter():
+    for fn in (api_main.builder_record, api_main.builder_record_daily):
+        src = inspect.getsource(fn)
+        assert "COALESCE(pr.legs->>'sport', 'mlb') = :sport" in src
+
+
+class _CapturingConn:
+    def __init__(self, rows, calls):
+        self._rows, self._calls = rows, calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, statement, params=None):
+        self._calls.append(params)
+        return _FakeResult(self._rows)
+
+
+class _CapturingEngine:
+    def __init__(self, rows):
+        self.rows, self.calls = rows, []
+
+    def begin(self):
+        return _CapturingConn(self.rows, self.calls)
+
+
+def test_builder_record_threads_sport_param(monkeypatch):
+    eng = _CapturingEngine([("across_game", 1.4, 25, 18, 6, 1, -0.14)])
+    monkeypatch.setattr(api_main, "engine", eng)
+    api_main.builder_record(sport="nfl")
+    assert eng.calls[0]["sport"] == "nfl"
+
+
+def test_builder_record_daily_threads_sport_param(monkeypatch):
+    eng = _CapturingEngine([("2026-09-11", 5, 3, 2, 0, 1.2)])
+    monkeypatch.setattr(api_main, "engine", eng)
+    api_main.builder_record_daily(sport="nfl")
+    assert eng.calls[0]["sport"] == "nfl"
+
+
+def test_builder_record_defaults_sport_to_mlb(monkeypatch):
+    eng = _CapturingEngine([])
+    monkeypatch.setattr(api_main, "engine", eng)
+    api_main.builder_record()
+    assert eng.calls[0]["sport"] == "mlb"
