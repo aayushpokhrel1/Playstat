@@ -24,18 +24,18 @@ from optimizer.builder_core import (
 TEAM_MARKETS = {
     "mlb": ("first_inning_runs", "f5_runs"),
     "nfl": ("full_game_total", "full_game_spread", "full_game_moneyline"),
+    "nba": ("full_game_total", "full_game_spread", "full_game_moneyline"),
 }
 
 # Per-sport slate window (days added to the lower bound). MLB bets a single day's
 # slate; NFL bets a weekly Thu..Mon card (see 2026-07-29-nfl-chain-record spec).
-SLATE_WINDOW_DAYS = {"mlb": 0, "nfl": 4}
+SLATE_WINDOW_DAYS = {"mlb": 0, "nfl": 4, "nba": 0}
 
 
 def _team_class(sport):
-    """--team-only save class: NFL's game-market tier is distinct ('game_tier')
-    from MLB's NRFI/F5 team tier ('team_tier'), additive — see NFL builder #3
-    design spec §D. Both are kind='builder', --team-only saves."""
-    return "game_tier" if sport == "nfl" else "team_tier"
+    """--team-only save class: NFL AND NBA full-game markets save game_tier
+    (spread/ML/total), distinct from MLB NRFI/F5 team_tier. Both kind=builder."""
+    return "game_tier" if sport in ("nfl", "nba") else "team_tier"
 
 
 def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):

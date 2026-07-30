@@ -81,6 +81,13 @@ GAME_MARKETS = {
         "full_game_spread":    ("points", "all", "game"),  # betTypeID sp
         "full_game_moneyline": ("points", "all", "game"),  # betTypeID ml
     },
+    # NBA full-game markets: total/spread/moneyline, same shape as NFL (statID
+    # points / entity all / period game; betTypeID ou/sp/ml). Live at ~October.
+    "nba": {
+        "full_game_total":     ("points", "all", "game"),
+        "full_game_spread":    ("points", "all", "game"),
+        "full_game_moneyline": ("points", "all", "game"),
+    },
 }
 
 # market name -> SGO betTypeID. Home/away markets use sp/ml; everything else ou.
