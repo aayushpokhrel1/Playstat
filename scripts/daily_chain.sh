@@ -109,10 +109,10 @@ run_chain() {
 		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
 		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
 		_step_retry first_inning "$PY" -m modeling.first_inning --days 2 &&
-		_step builder_1.4      "$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
-		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
-		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --save &&
-		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --save &&
+		_step builder_1.4      "$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step clv              "$PY" -m modeling.clv &&
 		_step settle           "$PY" -m modeling.settle
 	# MODEL PIPELINE SHELVED 2026-07-29 (README §16, user-approved 2026-07-28,
