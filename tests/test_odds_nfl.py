@@ -11,7 +11,52 @@ from ingestion.odds_ingest import (
     collect_prop_rows,
     collect_game_rows,
     observed_statid_summary,
+    bettype_for_market,
 )
+
+NFL_MARKETS = GAME_MARKETS["nfl"]
+
+
+def _odd(stat="points", entity="all", period="game", bt="ou", side="over", price="-110", **extra):
+    return {"statID": stat, "statEntityID": entity, "periodID": period,
+            "betTypeID": bt, "sideID": side, "bookOdds": price,
+            "bookOverUnder": extra.get("ou_line"), "bookSpread": extra.get("spread")}
+
+
+def test_bettype_for_market():
+    assert bettype_for_market("full_game_spread") == "sp"
+    assert bettype_for_market("full_game_moneyline") == "ml"
+    assert bettype_for_market("full_game_total") == "ou"
+
+
+def test_collect_game_rows_total_ou_unchanged():
+    ev = {"odds": {"a": _odd(bt="ou", side="over", price="-105", ou_line="44.5"),
+                   "b": _odd(bt="ou", side="under", price="-115", ou_line="44.5")}}
+    rows = {r["market"]: r for r in collect_game_rows(ev, NFL_MARKETS)}
+    r = rows["full_game_total"]
+    assert r["line_value"] == "44.5" and r["over_odds"] == -105 and r["under_odds"] == -115
+    assert r.get("home_odds") is None and r.get("away_odds") is None
+
+
+def test_collect_game_rows_spread_home_away():
+    ev = {"odds": {"a": _odd(bt="sp", side="home", price="-110", spread="-3.5"),
+                   "b": _odd(bt="sp", side="away", price="-110", spread="3.5")}}
+    r = {x["market"]: x for x in collect_game_rows(ev, NFL_MARKETS)}["full_game_spread"]
+    assert r["home_odds"] == -110 and r["away_odds"] == -110
+    assert r["line_value"] == "-3.5"   # HOME spread
+    assert r.get("over_odds") is None and r.get("under_odds") is None
+
+
+def test_collect_game_rows_moneyline_no_line():
+    ev = {"odds": {"a": _odd(bt="ml", side="home", price="-160"),
+                   "b": _odd(bt="ml", side="away", price="+140")}}
+    r = {x["market"]: x for x in collect_game_rows(ev, NFL_MARKETS)}["full_game_moneyline"]
+    assert r["home_odds"] == -160 and r["away_odds"] == 140 and r.get("line_value") is None
+
+
+def test_collect_game_rows_skips_unmapped_bettype():
+    ev = {"odds": {"a": _odd(bt="xx", side="home", price="-110")}}
+    assert collect_game_rows(ev, NFL_MARKETS) == []
 
 
 def _prop_odd(stat_id, entity, side, line, price):
@@ -62,7 +107,7 @@ def test_collect_game_rows_maps_the_nfl_full_game_total():
     }
     rows = collect_game_rows(event, GAME_MARKETS["nfl"])
     assert rows == [{
-        "market": "game_total", "line_value": 47.5,
+        "market": "full_game_total", "line_value": 47.5,
         "over_odds": -110, "under_odds": -108,
     }]
 
@@ -102,3 +147,22 @@ def test_observed_statid_summary_partitions_mapped_and_unmapped():
     summary = observed_statid_summary(events, STAT_MAPS["nfl"], GAME_MARKETS["nfl"])
     assert summary["mapped"] == {pass_yards_statid: 2, "points": 1}
     assert summary["unmapped"] == {"kicking_points": 1}
+
+
+def test_observed_statid_summary_counts_bettypes_per_game_market():
+    events = [
+        {"odds": {
+            "a": _odd(bt="ou", side="over", price="-110", ou_line="44.5"),
+            "b": _odd(bt="ou", side="under", price="-110", ou_line="44.5"),
+            "c": _odd(bt="sp", side="home", price="-110", spread="-3.5"),
+            "d": _odd(bt="sp", side="away", price="-110", spread="3.5"),
+            "e": _odd(bt="ml", side="home", price="-160"),
+            "f": _odd(bt="ml", side="away", price="+140"),
+        }},
+    ]
+    summary = observed_statid_summary(events, STAT_MAPS["nfl"], GAME_MARKETS["nfl"])
+    assert summary["bettypes"] == {
+        ("points", "ou"): 2,
+        ("points", "sp"): 2,
+        ("points", "ml"): 2,
+    }

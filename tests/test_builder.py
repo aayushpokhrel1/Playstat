@@ -198,3 +198,30 @@ def test_main_has_sport_flag_defaulting_to_mlb_and_threads_it():
     assert "load_legs(engine, args.floor, args.slate_date, args.sport)" in source
     assert "load_team_legs(engine, args.floor, args.slate_date, args.sport)" in source
     assert ", args.sport)" in source  # save_builds call carries sport last
+
+
+# --- per-sport game-market tier (NFL builder sub-project #3) -----------------
+
+def test_team_markets_per_sport():
+    assert builder.TEAM_MARKETS["mlb"] == ("first_inning_runs", "f5_runs")
+    assert builder.TEAM_MARKETS["nfl"] == ("full_game_total", "full_game_spread", "full_game_moneyline")
+
+
+def test_team_class_nfl_is_game_tier_mlb_is_team_tier():
+    assert builder._team_class("nfl") == "game_tier"
+    assert builder._team_class("mlb") == "team_tier"
+    assert builder._team_class("other") == "team_tier"
+
+
+def test_normalize_keeps_homeaway_and_applies_floor():
+    import pandas as pd
+    df = pd.DataFrame([
+        # moneyline home favorite (~0.71) -> kept
+        {"game_id": 1, "market": "full_game_moneyline", "line_value": None,
+         "over_odds": None, "under_odds": None, "home_odds": -250, "away_odds": 200, "model_prob": None},
+        # coin-flip total (~0.52) -> filtered by the 0.55 floor
+        {"game_id": 2, "market": "full_game_total", "line_value": 44.5,
+         "over_odds": -105, "under_odds": -105, "home_odds": None, "away_odds": None, "model_prob": None},
+    ])
+    legs = builder._normalize(df, normalize_team_leg, floor=0.55)
+    assert [l["market"] for l in legs] == ["full_game_moneyline"]

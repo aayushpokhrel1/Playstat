@@ -21,7 +21,17 @@ from optimizer.builder_core import (
     build, normalize_player_leg, normalize_team_leg, passes_floor,
 )
 
-TEAM_MARKETS = ("first_inning_runs", "f5_runs")
+TEAM_MARKETS = {
+    "mlb": ("first_inning_runs", "f5_runs"),
+    "nfl": ("full_game_total", "full_game_spread", "full_game_moneyline"),
+}
+
+
+def _team_class(sport):
+    """--team-only save class: NFL's game-market tier is distinct ('game_tier')
+    from MLB's NRFI/F5 team tier ('team_tier'), additive — see NFL builder #3
+    design spec §D. Both are kind='builder', --team-only saves."""
+    return "game_tier" if sport == "nfl" else "team_tier"
 
 
 def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
@@ -67,16 +77,22 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
 def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
     """Latest two-sided team-market lines on TODAY'S slate (unfinished games),
     + model_prob context. See load_player_legs for the slate_date/sport rationale.
+    markets are per-sport (TEAM_MARKETS[sport]); a sport with no game markets
+    configured (unknown sport) short-circuits to no legs.
     """
+    markets = list(TEAM_MARKETS.get(sport, ()))
+    if not markets:
+        return []
     with engine.begin() as conn:
         df = pd.read_sql(
             text(
                 """
-                SELECT gl.game_id, gl.market, gl.line_value, gl.over_odds, gl.under_odds,
+                SELECT gl.game_id, gl.market, gl.line_value,
+                       gl.over_odds, gl.under_odds, gl.home_odds, gl.away_odds,
                        ge.model_prob
                 FROM (
                     SELECT DISTINCT ON (game_id, market)
-                        game_id, market, line_value, over_odds, under_odds
+                        game_id, market, line_value, over_odds, under_odds, home_odds, away_odds
                     FROM game_lines
                     WHERE market = ANY(:markets)
                     ORDER BY game_id, market, pulled_at DESC
@@ -87,7 +103,7 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
                 LEFT JOIN game_edges ge ON ge.game_id = gl.game_id AND ge.market = gl.market
                 """
             ),
-            conn, params={"markets": list(TEAM_MARKETS), "slate_date": slate_date, "sport": sport},
+            conn, params={"markets": markets, "slate_date": slate_date, "sport": sport},
         )
     return _normalize(df, normalize_team_leg, floor)
 
@@ -95,12 +111,19 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
 def _normalize(df, normalizer, floor):
     if df.empty:
         return []
-    # A book quoting only one side can't be de-vigged (~8% of live MLB lines).
-    df = df.dropna(subset=["over_odds", "under_odds", "line_value"])
-    if df.empty:
-        return []
-    df = df.where(pd.notna(df), None)
-    legs = [normalizer(row) for row in df.to_dict("records")]
+    from optimizer.builder_core import is_home_away_market
+    def _valid(r):
+        m = r.get("market")
+        if m is not None and is_home_away_market(m):
+            if r.get("home_odds") is None or r.get("away_odds") is None:
+                return False
+            if m == "full_game_spread" and r.get("line_value") is None:
+                return False
+            return True
+        # player props + over/under game markets
+        return not (r.get("over_odds") is None or r.get("under_odds") is None or r.get("line_value") is None)
+    records = [r for r in df.where(pd.notna(df), None).to_dict("records") if _valid(r)]
+    legs = [normalizer(r) for r in records]
     return [leg for leg in legs if passes_floor(leg, floor)]
 
 
@@ -224,7 +247,10 @@ def main():
                   f"(market {leg['market_prob']:.1%})")
 
     if args.save:
-        parlay_class = "team_tier" if args.team_only else "across_game"
+        if args.team_only:
+            parlay_class = _team_class(args.sport)
+        else:
+            parlay_class = "across_game"
         saved = save_builds(engine, args.target_payout or 0.0, results, parlay_class, args.sport)
         print(f"parlay_recommendations (kind=builder, class={parlay_class}): "
               f"inserted {saved} rows")

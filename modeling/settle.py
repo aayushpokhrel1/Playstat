@@ -24,6 +24,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from ingestion import db
+from optimizer.builder_core import is_home_away_market
 from optimizer.parlay import DEFAULT_MIN_EDGE, american_to_decimal
 
 
@@ -44,6 +45,26 @@ def settle_leg(side, actual, line):
             return "miss"
         return "push"
     raise ValueError(f"unknown side: {side!r}")
+
+
+def game_total(home_pts, away_pts):
+    return float(home_pts) + float(away_pts)
+
+
+def settle_spread_leg(side, home_pts, away_pts, home_line):
+    """home_line is the HOME spread; away's is its negation. Push -> void."""
+    margin = float(home_pts) - float(away_pts)
+    covered = margin + float(home_line) if side == "home" else -(margin + float(home_line))
+    if covered == 0:
+        return "void"
+    return "won" if covered > 0 else "lost"
+
+
+def settle_moneyline_leg(side, home_pts, away_pts):
+    if home_pts == away_pts:
+        return "void"   # tie -> push
+    winner = "home" if home_pts > away_pts else "away"
+    return "won" if side == winner else "lost"
 
 
 def leg_status(game_status, actual):
@@ -427,8 +448,15 @@ def settle_builder_parlays(engine):
         tstats = pd.read_sql(
             text("""SELECT game_id, stat_type, SUM(value) AS total
                     FROM team_game_stats
-                    WHERE game_id = ANY(:g) AND stat_type IN ('runs_inning_1','runs_f5')
+                    WHERE game_id = ANY(:g) AND stat_type IN ('runs_inning_1','runs_f5','points')
                     GROUP BY game_id, stat_type"""),
+            conn, params={"g": game_ids})
+        tpoints = pd.read_sql(
+            text("""SELECT game_id, team_id, value FROM team_game_stats
+                    WHERE game_id = ANY(:g) AND stat_type = 'points'"""),
+            conn, params={"g": game_ids})
+        ghome = pd.read_sql(
+            text("SELECT game_id, home_team_id, away_team_id FROM games WHERE game_id = ANY(:g)"),
             conn, params={"g": game_ids})
         plines = pd.read_sql(
             text("""SELECT player_id, game_id, stat_type, line_value, pulled_at
@@ -441,11 +469,24 @@ def settle_builder_parlays(engine):
 
     status = dict(zip(games["game_id"], games["status"]))
     pstats_lookup = {(r.player_id, r.game_id, r.stat_type): r.value for r in pstats.itertuples()}
-    stat_to_market = {"runs_inning_1": "first_inning_runs", "runs_f5": "f5_runs"}
+    stat_to_market = {"runs_inning_1": "first_inning_runs", "runs_f5": "f5_runs", "points": "full_game_total"}
     tstats_lookup = {(int(r.game_id), stat_to_market[r.stat_type]): float(r.total)
                      for r in tstats.itertuples()}
     plines_grp = plines.groupby(["player_id", "game_id", "stat_type"])
     glines_grp = glines.groupby(["game_id", "market"])
+
+    pts = {(int(r.game_id), int(r.team_id)): float(r.value) for r in tpoints.itertuples()}
+    ha = {int(r.game_id): (int(r.home_team_id), int(r.away_team_id)) for r in ghome.itertuples()}
+
+    def _game_scores(gid):
+        ht, at = ha.get(gid, (None, None))
+        return pts.get((gid, ht)), pts.get((gid, at))
+
+    # settle_spread_leg/settle_moneyline_leg use "won"/"lost"/"void" (distinct
+    # from settle_leg's "hit"/"miss"/"push"); translate to the vocabulary
+    # parlay_result() understands ("hit"/"miss" flip the parlay, anything else
+    # is dropped like a push) while the audit JSONB keeps the original word.
+    _WLV_TO_HIT_MISS = {"won": "hit", "lost": "miss", "void": "void"}
 
     inserted = 0
     with engine.begin() as conn:
@@ -462,6 +503,37 @@ def settle_builder_parlays(engine):
                     audit_id = {"player_id": pid, "stat_type": stat_type}
                 else:
                     _, _, market = key
+
+                    if is_home_away_market(market):
+                        hp, ap = _game_scores(gid)
+                        state = leg_status(gstatus, hp)
+                        if state == "pending":
+                            ready = False; break
+                        if state == "void":
+                            results.append("void"); odds_list.append(american_to_decimal(leg["odds"]))
+                            audit.append({"market": market, "kind": "team", "game_id": gid,
+                                          "side": leg["side"], "odds": int(leg["odds"]),
+                                          "result": "void", "dnp": True})
+                            continue
+                        if market == "full_game_spread":
+                            try:
+                                snaps = glines_grp.get_group((gid, market))
+                            except KeyError:
+                                ready = False; break
+                            line = _rec_snapshot(snaps, created_at)["line_value"]
+                            if line is None or pd.isna(line):
+                                ready = False; break
+                            res = settle_spread_leg(leg["side"], hp, ap, float(line))
+                        else:  # full_game_moneyline — NO line lookup
+                            res = settle_moneyline_leg(leg["side"], hp, ap)
+                        results.append(_WLV_TO_HIT_MISS[res])
+                        odds_list.append(american_to_decimal(leg["odds"]))
+                        audit.append({"market": market, "kind": "team", "game_id": gid,
+                                      "side": leg["side"], "home_pts": hp, "away_pts": ap,
+                                      "odds": int(leg["odds"]), "result": res})
+                        continue
+
+                    # over/under team market (MLB inning runs + NFL full_game_total)
                     actual = tstats_lookup.get((gid, market))
                     audit_id = {"market": market}
 

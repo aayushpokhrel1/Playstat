@@ -21,6 +21,18 @@ def favorite_side(over_odds, under_odds):
     return "under", p_under
 
 
+# market name -> geometry: "ou" (over/under, e.g. totals) or "homeaway"
+# (spread/moneyline). Drives normalize_team_leg's branch (NFL builder #3).
+MARKET_GEOMETRY = {
+    "first_inning_runs": "ou", "f5_runs": "ou", "full_game_total": "ou",
+    "full_game_spread": "homeaway", "full_game_moneyline": "homeaway",
+}
+
+
+def is_home_away_market(market):
+    return MARKET_GEOMETRY.get(market) == "homeaway"
+
+
 def passes_floor(leg, floor=DEFAULT_FLOOR):
     return leg["market_prob"] >= floor
 
@@ -42,7 +54,7 @@ def _base_leg(game_id, side, market_prob, line_value, american_odds, model_prob,
         "game_id": int(game_id),
         "label": label,
         "side": side,
-        "line_value": float(line_value),
+        "line_value": None if line_value is None else float(line_value),
         "american_odds": int(american_odds),
         "decimal_odds": american_to_decimal(int(american_odds)),
         "market_prob": float(market_prob),
@@ -62,13 +74,20 @@ def normalize_player_leg(row):
 
 
 def normalize_team_leg(row):
-    side, prob = favorite_side(row["over_odds"], row["under_odds"])
-    odds = row["over_odds"] if side == "over" else row["under_odds"]
-    label = f"{row['market']} {side} {row['line_value']}"
-    leg = _base_leg(row["game_id"], side, prob, row["line_value"], odds,
-                    row.get("model_prob"), label)
-    leg.update({"kind": "team", "player_id": None, "stat_type": None,
-                "market": row["market"]})
+    market = row["market"]
+    if is_home_away_market(market):
+        raw, prob = favorite_side(row["home_odds"], row["away_odds"])   # "over"->home, "under"->away
+        side = "home" if raw == "over" else "away"
+        odds = row["home_odds"] if side == "home" else row["away_odds"]
+        line = row.get("line_value")
+        label = f"{market} {side}" if line is None else f"{market} {side} {line}"
+    else:
+        side, prob = favorite_side(row["over_odds"], row["under_odds"])
+        odds = row["over_odds"] if side == "over" else row["under_odds"]
+        line = row["line_value"]
+        label = f"{market} {side} {line}"
+    leg = _base_leg(row["game_id"], side, prob, line, odds, row.get("model_prob"), label)
+    leg.update({"kind": "team", "player_id": None, "stat_type": None, "market": market})
     return leg
 
 

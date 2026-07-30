@@ -1,8 +1,42 @@
 import pytest
 from optimizer.builder_core import (
     favorite_side, normalize_player_leg, normalize_team_leg,
-    passes_floor, DEFAULT_FLOOR,
+    passes_floor, DEFAULT_FLOOR, MARKET_GEOMETRY, is_home_away_market,
 )
+
+
+def test_market_geometry():
+    assert MARKET_GEOMETRY["first_inning_runs"] == "ou"
+    assert MARKET_GEOMETRY["full_game_total"] == "ou"
+    assert MARKET_GEOMETRY["full_game_spread"] == "homeaway"
+    assert MARKET_GEOMETRY["full_game_moneyline"] == "homeaway"
+    assert is_home_away_market("full_game_moneyline") and not is_home_away_market("full_game_total")
+
+
+def test_normalize_team_leg_ou_unchanged():
+    # -200/+170 favors OVER; existing behavior
+    leg = normalize_team_leg({"game_id": 1, "market": "full_game_total", "line_value": 44.5,
+                              "over_odds": -200, "under_odds": 170, "home_odds": None,
+                              "away_odds": None, "model_prob": None})
+    assert leg["kind"] == "team" and leg["side"] == "over" and leg["market_prob"] > 0.6
+
+
+def test_normalize_team_leg_moneyline_home_favorite_null_line():
+    # home -250 vs away +200 -> home favorite, no line
+    leg = normalize_team_leg({"game_id": 5, "market": "full_game_moneyline", "line_value": None,
+                              "over_odds": None, "under_odds": None, "home_odds": -250,
+                              "away_odds": 200, "model_prob": None})
+    assert leg["side"] == "home" and leg["market"] == "full_game_moneyline"
+    assert leg["line_value"] is None and leg["american_odds"] == -250
+    assert leg["market_prob"] > 0.55 and "moneyline" in leg["label"]
+
+
+def test_normalize_team_leg_spread_away_favorite_uses_home_line():
+    # home +130 / away -150 -> away favorite; line stored is the HOME spread
+    leg = normalize_team_leg({"game_id": 7, "market": "full_game_spread", "line_value": 3.5,
+                              "over_odds": None, "under_odds": None, "home_odds": 130,
+                              "away_odds": -150, "model_prob": None})
+    assert leg["side"] == "away" and leg["american_odds"] == -150 and leg["line_value"] == 3.5
 
 
 def test_favorite_side_picks_higher_devigged_side():

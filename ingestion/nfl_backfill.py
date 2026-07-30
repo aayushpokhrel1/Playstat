@@ -199,6 +199,19 @@ def backfill_teams(schedule_rows, engine, seasons):
     return team_ids
 
 
+def team_points_rows(row, game_id, home_team_id, away_team_id):
+    """Pure: final-score rows for team_game_stats. Empty for an unplayed game.
+    NFL final scores are otherwise discarded at ingest (see README §16 / #3);
+    stored as a 'points' actual so settlement reads them like MLB runs_inning_1."""
+    home, away = row.get("home_score"), row.get("away_score")
+    if home in (None, "") or away in (None, ""):
+        return []
+    return [
+        {"team_id": home_team_id, "game_id": game_id, "stat_type": "points", "value": int(home)},
+        {"team_id": away_team_id, "game_id": game_id, "stat_type": "points", "value": int(away)},
+    ]
+
+
 def backfill_games(schedule_rows, engine, seasons, team_ids):
     seasons = {str(s) for s in seasons}
     game_ids = _game_id_map(schedule_rows, seasons)
@@ -221,6 +234,8 @@ def backfill_games(schedule_rows, engine, seasons, team_ids):
                     "status": "FT" if played else "NS",
                 },
             )
+            for pr in team_points_rows(row, game_id, team_ids[row["home_team"]], team_ids[row["away_team"]]):
+                db.upsert(conn, "team_game_stats", ["team_id", "game_id", "stat_type"], pr)
     print(f"games: upserted {len(rows)}")
     return game_ids
 
