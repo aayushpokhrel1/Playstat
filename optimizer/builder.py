@@ -26,6 +26,10 @@ TEAM_MARKETS = {
     "nfl": ("full_game_total", "full_game_spread", "full_game_moneyline"),
 }
 
+# Per-sport slate window (days added to the lower bound). MLB bets a single day's
+# slate; NFL bets a weekly Thu..Mon card (see 2026-07-29-nfl-chain-record spec).
+SLATE_WINDOW_DAYS = {"mlb": 0, "nfl": 4}
+
 
 def _team_class(sport):
     """--team-only save class: NFL's game-market tier is distinct ('game_tier')
@@ -34,19 +38,22 @@ def _team_class(sport):
     return "game_tier" if sport == "nfl" else "team_tier"
 
 
-def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
+def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
     """Latest two-sided player prop lines on TODAY'S slate (unfinished games),
     + model_prob context.
 
-    slate_date restricts candidate games to `g.date = slate_date` (default:
-    CURRENT_DATE, evaluated server-side so it tracks the DB's timezone).
-    Without this, futures prop lines can leak games weeks/months out and mix
-    a tonight leg with a September leg in the same parlay (README §15.10
-    KNOWN ISSUE / §15.9 item 6).
+    slate_date restricts candidate games to a `g.date` range starting at
+    slate_date (default: CURRENT_DATE, evaluated server-side so it tracks the
+    DB's timezone) through slate_date + window_days inclusive. window_days=0
+    (MLB's default) collapses the range to a single day, identical to the old
+    `g.date = slate_date` behavior. Without this, futures prop lines can leak
+    games weeks/months out and mix a tonight leg with a September leg in the
+    same parlay (README §15.10 KNOWN ISSUE / §15.9 item 6).
 
     sport restricts candidate games to `g.sport = sport` (default: "mlb"),
     so an NFL builder run never pools MLB legs into the same parlay
-    (NFL builder sub-project #2).
+    (NFL builder sub-project #2). window_days lets NFL span its weekly
+    Thu..Mon card (NFL builder chain #4a) while MLB stays single-day.
     """
     with engine.begin() as conn:
         df = pd.read_sql(
@@ -62,23 +69,24 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
                     ORDER BY player_id, game_id, stat_type, pulled_at DESC
                 ) pl
                 JOIN games g ON g.game_id = pl.game_id AND g.status != 'FT'
-                    AND g.date = COALESCE(:slate_date, CURRENT_DATE)
+                    AND g.date BETWEEN COALESCE(:slate_date, CURRENT_DATE)
+                                   AND COALESCE(:slate_date, CURRENT_DATE) + :window_days
                     AND g.sport = :sport
                 JOIN players p ON p.player_id = pl.player_id
                 LEFT JOIN edges e ON e.player_id = pl.player_id
                     AND e.game_id = pl.game_id AND e.stat_type = pl.stat_type
                 """
             ),
-            conn, params={"slate_date": slate_date, "sport": sport},
+            conn, params={"slate_date": slate_date, "sport": sport, "window_days": window_days},
         )
     return _normalize(df, normalize_player_leg, floor)
 
 
-def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
+def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
     """Latest two-sided team-market lines on TODAY'S slate (unfinished games),
-    + model_prob context. See load_player_legs for the slate_date/sport rationale.
-    markets are per-sport (TEAM_MARKETS[sport]); a sport with no game markets
-    configured (unknown sport) short-circuits to no legs.
+    + model_prob context. See load_player_legs for the slate_date/sport/window_days
+    rationale. markets are per-sport (TEAM_MARKETS[sport]); a sport with no game
+    markets configured (unknown sport) short-circuits to no legs.
     """
     markets = list(TEAM_MARKETS.get(sport, ()))
     if not markets:
@@ -98,12 +106,14 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
                     ORDER BY game_id, market, pulled_at DESC
                 ) gl
                 JOIN games g ON g.game_id = gl.game_id AND g.status != 'FT'
-                    AND g.date = COALESCE(:slate_date, CURRENT_DATE)
+                    AND g.date BETWEEN COALESCE(:slate_date, CURRENT_DATE)
+                                   AND COALESCE(:slate_date, CURRENT_DATE) + :window_days
                     AND g.sport = :sport
                 LEFT JOIN game_edges ge ON ge.game_id = gl.game_id AND ge.market = gl.market
                 """
             ),
-            conn, params={"markets": markets, "slate_date": slate_date, "sport": sport},
+            conn, params={"markets": markets, "slate_date": slate_date, "sport": sport,
+                          "window_days": window_days},
         )
     return _normalize(df, normalize_team_leg, floor)
 
@@ -134,9 +144,9 @@ def _normalize(df, normalizer, floor):
     return [leg for leg in legs if passes_floor(leg, floor)]
 
 
-def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb"):
-    return (load_player_legs(engine, floor, slate_date, sport)
-            + load_team_legs(engine, floor, slate_date, sport))
+def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
+    return (load_player_legs(engine, floor, slate_date, sport, window_days)
+            + load_team_legs(engine, floor, slate_date, sport, window_days))
 
 
 def save_builds(engine, target_payout, results, parlay_class="across_game", sport="mlb"):
@@ -214,6 +224,10 @@ def main():
     parser.add_argument("--slate-date", type=str, default=None,
                         help="restrict candidate games to this date (YYYY-MM-DD). "
                              "Default: today (CURRENT_DATE, server-tz).")
+    parser.add_argument("--window-days", type=int, default=None,
+                        help="slate window length in days added to the lower bound "
+                             "(default: per-sport — mlb 0 = today only, nfl 4 = Thu..Mon "
+                             "weekly card). Override to force a specific span.")
     parser.add_argument("--team-only", action="store_true",
                         help="build from team-market (NRFI/F5) legs only — a dedicated, "
                              "higher-variance team tier (README §15.9 item 5). --save "
@@ -228,11 +242,13 @@ def main():
     if args.target_payout is None and args.min_prob is None:
         parser.error("pin at least one axis: --target-payout and/or --min-prob")
 
+    window_days = args.window_days if args.window_days is not None else SLATE_WINDOW_DAYS.get(args.sport, 0)
+
     engine = db.get_engine()
     if args.team_only:
-        legs = load_team_legs(engine, args.floor, args.slate_date, args.sport)
+        legs = load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)
     else:
-        legs = load_legs(engine, args.floor, args.slate_date, args.sport)
+        legs = load_legs(engine, args.floor, args.slate_date, args.sport, window_days)
     print(f"candidate legs (favorite side, market prob >= {args.floor:.0%}): {len(legs)}")
     if not legs:
         print("no candidate legs — nothing to build.")
