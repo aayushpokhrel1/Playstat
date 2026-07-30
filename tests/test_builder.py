@@ -92,9 +92,18 @@ def test_build_on_team_only_legs_can_legitimately_return_nothing():
     assert results == []
 
 
+class _SelectResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
 class _CapturingConn:
-    def __init__(self, calls):
+    def __init__(self, calls, select_rows):
         self._calls = calls
+        self._select_rows = select_rows
 
     def __enter__(self):
         return self
@@ -103,18 +112,26 @@ class _CapturingConn:
         return False
 
     def execute(self, stmt, params=None):
+        # save_builds first SELECTs the constructions already saved today (dedup),
+        # then INSERTs. Return the seeded existing rows for the SELECT; only the
+        # INSERT params are recorded in .calls (what these tests assert on).
+        if "SELECT" in str(stmt):
+            return _SelectResult(self._select_rows)
         self._calls.append(params)
         return None
 
 
 class _CapturingEngine:
-    """Records the params passed to conn.execute — never touches a real DB."""
+    """Records the params passed to conn.execute — never touches a real DB.
+    select_rows seeds the dedup SELECT (each row a 1-tuple whose [0] is the
+    already-saved construction's legs list); default empty = nothing saved yet."""
 
-    def __init__(self):
+    def __init__(self, select_rows=()):
         self.calls = []
+        self._select_rows = list(select_rows)
 
     def begin(self):
-        return _CapturingConn(self.calls)
+        return _CapturingConn(self.calls, self._select_rows)
 
 
 def _one_result(kind="team", **overrides):
@@ -188,6 +205,74 @@ def test_save_builds_sport_defaults_to_mlb():
     builder.save_builds(engine, 1.4, _one_result("player"))
     blob = json.loads(engine.calls[0]["legs"])
     assert blob["sport"] == "mlb"
+
+
+# --- dedup identical constructions across target-payout builds ---------------
+# A thin team tier often has ONE 2-leg card that clears both the 1.4x and 2.0x
+# floors, so each --target-payout build saved the SAME construction -> duplicate
+# dashboard rows + a double-counted paper-ledger bet (found live 2026-07-30).
+
+def _saved_legs(*legs):
+    """The stored legs->'legs' shape (as save_builds writes it)."""
+    return [
+        {"kind": k, "game_id": g, "player_id": p, "stat_type": st, "market": m,
+         "side": s, "line": ln, "odds": o, "label": "x", "market_prob": 0.6, "model_prob": None}
+        for (k, g, p, st, m, s, ln, o) in legs
+    ]
+
+
+def test_construction_signature_order_independent_and_target_agnostic():
+    a = _saved_legs(
+        ("team", 1, None, None, "first_inning_runs", "under", 0.5, -150),
+        ("team", 2, None, None, "first_inning_runs", "over", 0.5, -145),
+    )
+    b = list(reversed(a))  # same legs, different order -> same signature
+    assert builder.construction_signature(a) == builder.construction_signature(b)
+    c = _saved_legs(  # one leg's odds differ -> different signature
+        ("team", 1, None, None, "first_inning_runs", "under", 0.5, -150),
+        ("team", 2, None, None, "first_inning_runs", "over", 0.5, -140),
+    )
+    assert builder.construction_signature(a) != builder.construction_signature(c)
+
+
+def _team_result():
+    return [{
+        "legs": [
+            {"kind": "team", "game_id": 1, "player_id": None, "stat_type": None,
+             "market": "first_inning_runs", "side": "under", "line_value": 0.5,
+             "american_odds": -150, "market_prob": 0.6, "model_prob": None, "label": "x"},
+            {"kind": "team", "game_id": 2, "player_id": None, "stat_type": None,
+             "market": "first_inning_runs", "side": "over", "line_value": 0.5,
+             "american_odds": -145, "market_prob": 0.6, "model_prob": None, "label": "y"},
+        ],
+        "joint_prob": 0.315, "combined_odds": 2.816,
+    }]
+
+
+def test_save_builds_skips_construction_already_saved_today():
+    existing = _saved_legs(
+        ("team", 1, None, None, "first_inning_runs", "under", 0.5, -150),
+        ("team", 2, None, None, "first_inning_runs", "over", 0.5, -145),
+    )
+    engine = _CapturingEngine(select_rows=[(existing,)])  # the 1.4x build already saved it
+    saved = builder.save_builds(engine, 2.0, _team_result(), parlay_class="team_tier")
+    assert saved == 0
+    assert engine.calls == []  # no INSERT — identical construction skipped
+
+
+def test_save_builds_saves_when_nothing_identical_today():
+    engine = _CapturingEngine(select_rows=[])  # nothing saved yet today
+    saved = builder.save_builds(engine, 1.4, _team_result(), parlay_class="team_tier")
+    assert saved == 1
+    assert len(engine.calls) == 1
+
+
+def test_save_builds_dedups_within_one_batch():
+    # Two identical constructions in ONE build must save once (belt-and-suspenders).
+    engine = _CapturingEngine(select_rows=[])
+    saved = builder.save_builds(engine, 1.4, _team_result() + _team_result(), parlay_class="team_tier")
+    assert saved == 1
+    assert len(engine.calls) == 1
 
 
 def test_main_has_sport_flag_defaulting_to_mlb_and_threads_it():

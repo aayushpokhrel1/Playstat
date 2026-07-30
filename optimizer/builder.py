@@ -149,6 +149,28 @@ def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_
             + load_team_legs(engine, floor, slate_date, sport, window_days))
 
 
+def construction_signature(legs_json):
+    """Order-independent identity of a construction's leg set (the stored
+    legs->'legs' shape). Two constructions with the same legs are the SAME bet
+    regardless of which target-payout floor produced them, so they must not both
+    be persisted: a thin tier (NRFI/F5) often has one 2-leg card that clears BOTH
+    the 1.4x and 2.0x floors, and each --target-payout build would otherwise save
+    it — a duplicate dashboard row AND a double-counted paper-ledger bet (found
+    live 2026-07-30). frozenset makes it leg-order-independent and hashable.
+    """
+    return frozenset(
+        (l.get("kind"), l.get("game_id"), l.get("player_id"), l.get("stat_type"),
+         l.get("market"), l.get("side"), l.get("line"), l.get("odds"))
+        for l in legs_json
+    )
+
+
+def _stored_legs(raw):
+    """The legs list from a legs->'legs' JSONB cell (psycopg2 returns it parsed;
+    tolerate a raw string on other driver paths)."""
+    return raw if isinstance(raw, list) else json.loads(raw)
+
+
 def save_builds(engine, target_payout, results, parlay_class="across_game", sport="mlb"):
     """Persist constructions. No EV/edge field is written — this builder makes no such claim.
 
@@ -161,9 +183,27 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
     sport is written into the same wrapper as {"sport": ...} (default "mlb").
     Existing MLB rows predate this field and have no "sport" key; readers
     treat an absent key as "mlb" (NFL builder sub-project #2).
+
+    DEDUP (found live 2026-07-30): a construction identical to one already saved
+    for TODAY'S slate of the same (kind='builder', class, sport) is skipped — the
+    1.4x and 2.0x builds of a thin tier otherwise each save the same card. Scoped
+    to today's builds (CURRENT_DATE) so it never suppresses a legitimately-repeated
+    card on a later slate; also dedups within the current batch.
     """
     rows = 0
     with engine.begin() as conn:
+        existing = conn.execute(
+            text(
+                """
+                SELECT legs->'legs' FROM parlay_recommendations
+                WHERE kind = 'builder' AND created_at::date = CURRENT_DATE
+                  AND legs->>'class' = :cls
+                  AND COALESCE(legs->>'sport', 'mlb') = :sport
+                """
+            ),
+            {"cls": parlay_class, "sport": sport},
+        ).fetchall()
+        seen = {construction_signature(_stored_legs(row[0])) for row in existing}
         for r in results:
             legs_json = [
                 {
@@ -176,6 +216,10 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
                 }
                 for leg in r["legs"]
             ]
+            sig = construction_signature(legs_json)
+            if sig in seen:
+                continue
+            seen.add(sig)
             conn.execute(
                 text(
                     """
