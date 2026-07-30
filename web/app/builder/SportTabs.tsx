@@ -4,6 +4,7 @@ import styles from "./builder.module.css";
 const SPORTS: { key: string; label: string }[] = [
   { key: "mlb", label: "MLB" },
   { key: "nfl", label: "NFL" },
+  { key: "nba", label: "NBA" },
 ];
 
 export default function SportTabs({ active }: { active: string }) {

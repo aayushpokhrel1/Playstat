@@ -37,6 +37,21 @@ const SPORT_CFG = {
       body: "The weekly NFL card builds Thursday mornings once preseason odds open (~August). Check back then.",
     },
   },
+  nba: {
+    tier2: "game" as const,
+    playerHeading: "Tonight's low-risk parlays",
+    tier2Heading: "Game-market parlays",
+    tier2Note:
+      "Full-game total / spread / moneyline. Moneyline favorites can clear the safety floor; totals and spreads price near a coin flip, so this tier is higher-variance and may be empty.",
+    tier2Empty: {
+      title: "No game-market parlays tonight",
+      body: "Spreads and totals rarely clear the safety floor and moneyline favorites are picked sparingly — an empty night here is normal.",
+    },
+    emptyAll: {
+      title: "No NBA parlays yet",
+      body: "The nightly NBA card builds once the season opens (~October). Check back then.",
+    },
+  },
 } as const;
 
 export default async function BuilderPage({
@@ -45,7 +60,8 @@ export default async function BuilderPage({
   searchParams: Promise<{ sport?: string }>;
 }) {
   const sportParam = (await searchParams).sport;
-  const sport: "mlb" | "nfl" = sportParam === "nfl" ? "nfl" : "mlb";
+  const sport: "mlb" | "nfl" | "nba" =
+    sportParam === "nfl" ? "nfl" : sportParam === "nba" ? "nba" : "mlb";
   const cfg = SPORT_CFG[sport];
 
   let saved;

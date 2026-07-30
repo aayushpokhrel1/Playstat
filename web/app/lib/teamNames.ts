@@ -1,4 +1,5 @@
-// Static full-name -> nickname map for all 30 MLB teams
+// Static full-name -> nickname map for MLB (30) and NBA (30) teams
+// (NFL legs fall back to full names — no NFL block here yet; harmless, NFL offseason)
 // (docs/superpowers/plans/2026-07-28-leg-team-names.md).
 //
 // Naive last-token splitting is WRONG: it collapses "Boston Red Sox" and
@@ -36,6 +37,36 @@ const TEAM_NICKNAMES: Record<string, string> = {
   "Texas Rangers": "Rangers",
   "Toronto Blue Jays": "Blue Jays",
   "Washington Nationals": "Nationals",
+  "Atlanta Hawks": "Hawks",
+  "Boston Celtics": "Celtics",
+  "Brooklyn Nets": "Nets",
+  "Charlotte Hornets": "Hornets",
+  "Chicago Bulls": "Bulls",
+  "Cleveland Cavaliers": "Cavaliers",
+  "Dallas Mavericks": "Mavericks",
+  "Denver Nuggets": "Nuggets",
+  "Detroit Pistons": "Pistons",
+  "Golden State Warriors": "Warriors",
+  "Houston Rockets": "Rockets",
+  "Indiana Pacers": "Pacers",
+  "Los Angeles Clippers": "Clippers",
+  "Los Angeles Lakers": "Lakers",
+  "Memphis Grizzlies": "Grizzlies",
+  "Miami Heat": "Heat",
+  "Milwaukee Bucks": "Bucks",
+  "Minnesota Timberwolves": "Timberwolves",
+  "New Orleans Pelicans": "Pelicans",
+  "New York Knicks": "Knicks",
+  "Oklahoma City Thunder": "Thunder",
+  "Orlando Magic": "Magic",
+  "Philadelphia 76ers": "76ers",
+  "Phoenix Suns": "Suns",
+  "Portland Trail Blazers": "Trail Blazers",
+  "Sacramento Kings": "Kings",
+  "San Antonio Spurs": "Spurs",
+  "Toronto Raptors": "Raptors",
+  "Utah Jazz": "Jazz",
+  "Washington Wizards": "Wizards",
 };
 
 // Map lookup, fallback to the full name for anything unmapped (never wrong,
