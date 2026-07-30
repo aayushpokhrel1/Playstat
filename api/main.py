@@ -768,9 +768,11 @@ def _shape_builder_record(rows):
 
 
 @app.get("/parlay-builder/record", response_model=list[BuilderRecordOut])
-def builder_record():
+def builder_record(sport: str = "mlb"):
     """Paper-trading builder record split by tier + target payout (README §15).
-    Dashboard-only; /bet-performance is unchanged and still feeds web/app/clv."""
+    Dashboard-only; /bet-performance is unchanged and still feeds web/app/clv.
+    sport is additive (default "mlb", mirrors /parlay-builder/saved's COALESCE
+    default) so NFL and MLB records don't pool (NFL builder chain #4a)."""
     with engine.begin() as conn:
         rows = conn.execute(text(
             """
@@ -783,10 +785,11 @@ def builder_record():
             FROM recommendation_outcomes ro
             JOIN parlay_recommendations pr ON pr.parlay_id = ro.parlay_id
             WHERE pr.kind = 'builder'
+              AND COALESCE(pr.legs->>'sport', 'mlb') = :sport
             GROUP BY 1, 2
             ORDER BY 1, 2
             """
-        )).fetchall()
+        ), {"sport": sport}).fetchall()
     return _shape_builder_record(rows)
 
 
@@ -812,11 +815,13 @@ def _shape_builder_record_daily(rows):
 
 
 @app.get("/parlay-builder/record/daily", response_model=list[BuilderRecordDailyOut])
-def builder_record_daily():
+def builder_record_daily(sport: str = "mlb"):
     """Per-day drill-down of the builder record (README §15 follow-on):
     same settled-builder data as /parlay-builder/record, grouped by slate
     date instead of tier/target_payout. Newest date first. Dashboard-only;
-    /bet-performance is unchanged and still feeds web/app/clv."""
+    /bet-performance is unchanged and still feeds web/app/clv. sport is
+    additive (default "mlb") so NFL and MLB records don't pool (NFL builder
+    chain #4a)."""
     with engine.begin() as conn:
         rows = conn.execute(text(
             """
@@ -824,9 +829,11 @@ def builder_record_daily():
                    sum((ro.result='win')::int) wins, sum((ro.result='loss')::int) losses,
                    sum((ro.result='push')::int) pushes, sum(ro.pnl) pnl
             FROM recommendation_outcomes ro JOIN parlay_recommendations pr ON pr.parlay_id=ro.parlay_id
-            WHERE pr.kind='builder' GROUP BY 1 ORDER BY 1 DESC
+            WHERE pr.kind='builder'
+              AND COALESCE(pr.legs->>'sport', 'mlb') = :sport
+            GROUP BY 1 ORDER BY 1 DESC
             """
-        )).fetchall()
+        ), {"sport": sport}).fetchall()
     return _shape_builder_record_daily(rows)
 
 
