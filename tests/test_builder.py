@@ -225,3 +225,40 @@ def test_normalize_keeps_homeaway_and_applies_floor():
     ])
     legs = builder._normalize(df, normalize_team_leg, floor=0.55)
     assert [l["market"] for l in legs] == ["full_game_moneyline"]
+
+
+def test_normalize_drops_one_sided_line_with_nan_odds():
+    # REGRESSION (architect, live-caught 2026-07-29): a book quoting only one
+    # side arrives as pandas NaN in a numeric column — NOT Python None — so the
+    # `is None` validity check let it through and normalize_player_leg crashed on
+    # int(NaN). The row must be DROPPED, exactly like the old dropna did. Green
+    # unit tests missed this because they built dicts with real None, not NaN.
+    import pandas as pd
+    from optimizer.builder_core import normalize_player_leg
+    df = pd.DataFrame([
+        # one-sided (under_odds NaN in a float column) -> must be dropped
+        {"player_id": 1, "game_id": 10, "stat_type": "hits", "line_value": 1.5,
+         "over_odds": -120, "under_odds": None, "player_name": "X", "model_prob": None},
+        # two-sided -> kept
+        {"player_id": 2, "game_id": 11, "stat_type": "hits", "line_value": 1.5,
+         "over_odds": -120, "under_odds": 100, "player_name": "Y", "model_prob": None},
+    ])
+    assert df["under_odds"].isna().iloc[0]  # confirm the fixture is real NaN, not None
+    legs = builder._normalize(df, normalize_player_leg, floor=0.0)
+    assert [l["player_id"] for l in legs] == [2]
+
+
+def test_normalize_moneyline_nan_line_coerced_to_none():
+    # A moneyline's NULL line arrives as NaN when the line_value column is float
+    # (a spread row alongside forces float dtype). It must land as None, not NaN,
+    # so normalize_team_leg's `line is None` label branch and settlement work.
+    import pandas as pd
+    df = pd.DataFrame([
+        {"game_id": 1, "market": "full_game_moneyline", "line_value": None,
+         "over_odds": None, "under_odds": None, "home_odds": -250, "away_odds": 200, "model_prob": None},
+        {"game_id": 2, "market": "full_game_spread", "line_value": -3.5,
+         "over_odds": None, "under_odds": None, "home_odds": -110, "away_odds": -110, "model_prob": None},
+    ])
+    assert df["line_value"].isna().iloc[0]  # real NaN in a float column
+    legs = {l["market"]: l for l in builder._normalize(df, normalize_team_leg, floor=0.0)}
+    assert legs["full_game_moneyline"]["line_value"] is None

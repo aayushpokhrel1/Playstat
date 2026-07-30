@@ -122,7 +122,14 @@ def _normalize(df, normalizer, floor):
             return True
         # player props + over/under game markets
         return not (r.get("over_odds") is None or r.get("under_odds") is None or r.get("line_value") is None)
-    records = [r for r in df.where(pd.notna(df), None).to_dict("records") if _valid(r)]
+    # Convert pandas NaN -> None at the Python level. df.where(pd.notna(df), None)
+    # does NOT stick for numeric columns — pandas re-coerces None back to NaN, and
+    # `NaN is None` is False, so the _valid None-checks (and normalize_team_leg's
+    # moneyline `line is None`) would miss a one-sided/absent value and crash on
+    # int(NaN)/float(NaN). A dict of objects holds None fine (NaN != NaN, uniquely).
+    records = [{k: (None if (v is None or v != v) else v) for k, v in r.items()}
+               for r in df.to_dict("records")]
+    records = [r for r in records if _valid(r)]
     legs = [normalizer(r) for r in records]
     return [leg for leg in legs if passes_floor(leg, floor)]
 
