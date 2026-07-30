@@ -248,6 +248,64 @@ def test_normalize_drops_one_sided_line_with_nan_odds():
     assert [l["player_id"] for l in legs] == [2]
 
 
+# --- builder independence: --max-leg-reuse CLI flag (docs/superpowers/specs/
+# 2026-07-29-builder-independence-design.md) ----------------------------------
+
+def test_main_has_max_leg_reuse_flag_defaulting_to_2():
+    source = inspect.getsource(builder.main)
+    assert "--max-leg-reuse" in source
+    assert "default=2" in source
+    assert "max_uses=args.max_leg_reuse" in source
+
+
+def test_cli_max_leg_reuse_threads_into_build(monkeypatch):
+    # CRITICAL SAFETY: db.get_engine/load_legs are stubbed below so this never
+    # touches the live production DB (ingestion.db.get_engine() is LIVE).
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        # main() reads stats['candidate_games'/'nodes'/'matches'/'truncated']
+        # after the call — populate them like the real build() does, since
+        # this fake replaces it entirely.
+        if k.get("stats") is not None:
+            k["stats"].update(
+                {"candidate_games": 0, "nodes": 0, "matches": 0, "truncated": False}
+            )
+        return []
+
+    monkeypatch.setattr("optimizer.builder.build", _fake_build)
+    monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
+    monkeypatch.setattr("optimizer.builder.load_legs", lambda *a, **k: [{"x": 1}])
+    monkeypatch.setattr(
+        "sys.argv",
+        ["builder", "--target-payout", "1.4", "--max-leg-reuse", "3"],
+    )
+    from optimizer.builder import main
+    main()
+    assert captured["max_uses"] == 3
+
+
+def test_cli_max_leg_reuse_defaults_to_2(monkeypatch):
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        if k.get("stats") is not None:
+            k["stats"].update(
+                {"candidate_games": 0, "nodes": 0, "matches": 0, "truncated": False}
+            )
+        return []
+
+    monkeypatch.setattr("optimizer.builder.build", _fake_build)
+    monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
+    monkeypatch.setattr("optimizer.builder.load_legs", lambda *a, **k: [{"x": 1}])
+    monkeypatch.setattr("sys.argv", ["builder", "--target-payout", "1.4"])
+    from optimizer.builder import main
+    main()
+    assert captured["max_uses"] == 2
+
+
 def test_normalize_moneyline_nan_line_coerced_to_none():
     # A moneyline's NULL line arrives as NaN when the line_value column is float
     # (a spread row alongside forces float dtype). It must land as None, not NaN,
