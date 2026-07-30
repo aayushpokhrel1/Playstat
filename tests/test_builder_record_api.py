@@ -282,3 +282,26 @@ def test_builder_record_defaults_sport_to_mlb(monkeypatch):
     monkeypatch.setattr(api_main, "engine", eng)
     api_main.builder_record()
     assert eng.calls[0]["sport"] == "mlb"
+
+
+# --- NFL game tier (docs/superpowers/plans/2026-07-29-nfl-dashboard-view.md) -
+
+
+def test_game_tier_maps_to_game_label():
+    rows = [("game_tier", 1.4, 5, 3, 2, 0, 1.2)]
+    out = api_main._shape_builder_record(rows)
+    assert out[0].tier == "game"
+
+
+def test_tier_sort_orders_player_team_game():
+    rows = [
+        ("game_tier", 1.4, 5, 3, 2, 0, 1.2),
+        ("team_tier", 1.4, 5, 3, 2, 0, 1.2),
+        ("across_game", 1.4, 5, 3, 2, 0, 1.2),
+    ]
+    out = api_main._shape_builder_record(rows)
+    assert [r.tier for r in out] == ["player", "team", "game"]
+
+
+def test_tier_to_class_has_game_entry():
+    assert api_main.TIER_TO_CLASS["game"] == "game_tier"

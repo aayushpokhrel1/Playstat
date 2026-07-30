@@ -652,7 +652,7 @@ def parlay_builder(
 # `tier` gets exactly today's behaviour, unchanged (README §15.9 item 3 /
 # Budgerr contract — additive-only). "team" is the new dedicated team-only
 # tier (--team-only). "all" skips the class filter entirely.
-TIER_TO_CLASS = {"player": "across_game", "team": "team_tier"}
+TIER_TO_CLASS = {"player": "across_game", "team": "team_tier", "game": "game_tier"}
 
 
 @app.get("/parlay-builder/saved", response_model=list[SavedBuilderParlayOut])
@@ -738,10 +738,10 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player", sport: str = "m
 
 
 # reverse of TIER_TO_CLASS: legs->>'class' value -> reporting tier label
-_CLASS_TO_TIER = {"across_game": "player", "team_tier": "team"}
+_CLASS_TO_TIER = {"across_game": "player", "team_tier": "team", "game_tier": "game"}
 
-# tier sort key: player=0, team=1, unknown classes sort after both.
-_TIER_SORT_ORDER = {"player": 0, "team": 1}
+# tier sort key: player=0, team=1, game=2, unknown classes sort after all three.
+_TIER_SORT_ORDER = {"player": 0, "team": 1, "game": 2}
 
 
 def _shape_builder_record(rows):
