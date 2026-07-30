@@ -206,6 +206,11 @@ def main():
     parser.add_argument("--min-legs", type=int, default=DEFAULT_MIN_LEGS)
     parser.add_argument("--max-legs", type=int, default=DEFAULT_MAX_LEGS)
     parser.add_argument("--top-n", type=int, default=10)
+    parser.add_argument("--max-leg-reuse", type=int, default=2,
+                        help="cap how many saved constructions may reuse the same "
+                             "player (or, for team markets, the same game). 1 = fully "
+                             "disjoint. Diversifies the top-N so one outcome can't "
+                             "cascade across many cards.")
     parser.add_argument("--slate-date", type=str, default=None,
                         help="restrict candidate games to this date (YYYY-MM-DD). "
                              "Default: today (CURRENT_DATE, server-tz).")
@@ -241,7 +246,8 @@ def main():
     stats = {}
     results = build(legs, target_payout=args.target_payout, tolerance=args.tolerance,
                     min_prob=args.min_prob, min_legs=args.min_legs,
-                    max_legs=args.max_legs, top_n=args.top_n, stats=stats)
+                    max_legs=args.max_legs, top_n=args.top_n, stats=stats,
+                    max_uses=args.max_leg_reuse)
     print(f"searched {stats['candidate_games']} games, {stats['nodes']:,} nodes")
     if stats["truncated"]:
         print("WARNING: search hit its node budget — results are partial, not exhaustive.")

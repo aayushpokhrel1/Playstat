@@ -113,6 +113,27 @@ MAX_NODES = 5_000_000
 LAMBDA_GRID = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0)
 
 
+def entity_of(leg):
+    """Reuse-limited identity: the player for a player leg, else the game."""
+    return leg["player_id"] if leg["kind"] == "player" else leg["game_id"]
+
+
+def select_diverse(results, n, max_uses, entity_of=entity_of):
+    """Greedily pick up to n constructions in the given (rank-descending) order,
+    admitting one only if every entity it uses stays within max_uses. Not claimed
+    optimal — it removes cross-construction reuse cascade, nothing more."""
+    counts, chosen = {}, []
+    for con in results:
+        ents = {entity_of(l) for l in con["legs"]}
+        if all(counts.get(e, 0) < max_uses for e in ents):
+            for e in ents:
+                counts[e] = counts.get(e, 0) + 1
+            chosen.append(con)
+            if len(chosen) == n:
+                break
+    return chosen
+
+
 def dedupe_by_price(legs):
     """Per game, keep only the highest-probability leg at each distinct price.
 
@@ -155,7 +176,7 @@ def _suffix_sum_desc(per_game, n_games):
 
 def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
           min_legs=DEFAULT_MIN_LEGS, max_legs=DEFAULT_MAX_LEGS, top_n=10,
-          max_nodes=MAX_NODES, stats=None):
+          max_nodes=MAX_NODES, stats=None, max_uses=None):
     """Across-game parlay constructions, two-axis filtered and ranked.
 
     Pin target_payout -> filter to constructions paying AT LEAST that payout,
@@ -231,9 +252,19 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
     tolerance is retained for API/CLI/daily_chain compatibility but no longer
     affects results — the search is exact and unbounded, so there is no band to
     widen. It is accepted and ignored.
+
+    max_uses (docs/superpowers/specs/2026-07-29-builder-independence-design.md):
+    None (default) reproduces today's exact top_n, byte-for-byte — the exact
+    search itself is untouched either way. When set, the search instead keeps a
+    wider ranked pool (pool_n) and a pure post-hoc selection layer
+    (select_diverse) greedily picks up to top_n of those, admitting a
+    construction only while every player/game it uses stays within max_uses
+    across the selected set. Top-1 is always unchanged; only slots 2..N reshuffle.
     """
     if not legs:
         return []
+
+    pool_n = top_n if max_uses is None else max(top_n * 20, 100)
 
     by_game = {}
     for leg in dedupe_by_price(legs):
@@ -254,12 +285,13 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
     state = {"nodes": 0, "truncated": False, "matches": 0}
 
     def keep(result):
-        """Retain only the current top_n. Accumulating every match would
-        recreate the memory blow-up this builder exists to replace."""
+        """Retain only the current pool_n (== top_n unless max_uses widens the
+        pool for select_diverse). Accumulating every match would recreate the
+        memory blow-up this builder exists to replace."""
         state["matches"] += 1
         key = result["combined_odds"] if rank_by_payout else result["joint_prob"]
         entry = (key, next(counter), result)
-        if len(heap) < top_n:
+        if len(heap) < pool_n:
             heapq.heappush(heap, entry)
         elif key > heap[0][0]:
             heapq.heapreplace(heap, entry)
@@ -316,7 +348,7 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
             if state["truncated"]:
                 return
             remaining = size - len(chosen)
-            heap_full = len(heap) == top_n
+            heap_full = len(heap) == pool_n
             thr = heap[0][0] if heap_full else -1.0
             logthr = math.log(thr) if heap_full else 0.0
             for gi in range(start, n_games - remaining + 1):
@@ -430,7 +462,7 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
             if state["truncated"]:
                 return
             remaining = size - len(chosen)
-            heap_full = len(heap) == top_n
+            heap_full = len(heap) == pool_n
             thr = heap[0][0] if heap_full else -1.0
             logthr = math.log(thr) if heap_full else 0.0
             for gi in range(start, n_games - remaining + 1):
@@ -500,7 +532,8 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
 
     # Pinning the probability floor means "how much can I win at this safety
     # level" -> rank by payout. Otherwise rank by safety (joint probability).
-    results = [entry[2] for entry in sorted(heap, key=lambda e: e[0], reverse=True)]
+    ranked = [entry[2] for entry in sorted(heap, key=lambda e: e[0], reverse=True)]
+    results = ranked[:top_n] if max_uses is None else select_diverse(ranked, top_n, max_uses)
 
     if stats is not None:
         stats.update(state)

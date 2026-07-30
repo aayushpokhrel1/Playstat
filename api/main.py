@@ -572,6 +572,7 @@ def parlay_builder(
     min_legs: int = builder_core.DEFAULT_MIN_LEGS,
     max_legs: int = builder_core.DEFAULT_MAX_LEGS,
     top_n: int = 10,
+    max_leg_reuse: int = 2,
 ):
     """Low-risk parlay constructions ranked by de-vigged MARKET probability.
 
@@ -590,6 +591,11 @@ def parlay_builder(
     automatically (1.5x, 3x, then unbounded) until it finds the cheapest
     qualifying construction, so tolerance never changes *which* result is
     returned, only how quickly it's found.
+
+    max_leg_reuse caps how many returned constructions may reuse the same
+    player (or, for team markets, the same game) — default 2, matching the
+    CLI's --max-leg-reuse (docs/superpowers/specs/
+    2026-07-29-builder-independence-design.md). 1 = fully disjoint.
     """
     if target_payout is None and min_prob is None:
         raise HTTPException(
@@ -606,6 +612,7 @@ def parlay_builder(
     results = builder_core.build(
         legs, target_payout=target_payout, tolerance=tolerance, min_prob=min_prob,
         min_legs=min_legs, max_legs=max_legs, top_n=top_n, stats=stats,
+        max_uses=max_leg_reuse,
     )
 
     # Team-name context (docs/superpowers/plans/2026-07-28-leg-team-names.md)

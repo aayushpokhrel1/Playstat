@@ -207,6 +207,45 @@ def test_parlay_builder_returns_object_with_truncation_fields(monkeypatch):
     )
 
 
+# --- GET /parlay-builder?max_leg_reuse= (docs/superpowers/specs/
+# 2026-07-29-builder-independence-design.md) ----------------------------------
+# Additive optional query param, default 2 — no test DB, so the live search
+# itself (builder_core.build) is monkeypatched to capture kwargs, matching
+# this file's fake-engine convention (main.engine faked so the batched
+# games/players enrichment never opens a real connection either).
+
+def test_parlay_builder_max_leg_reuse_defaults_to_2_and_threads_into_build(monkeypatch):
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        return []
+
+    monkeypatch.setattr(main.builder_core, "build", _fake_build)
+    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor: [{"x": 1}])
+    monkeypatch.setattr(main, "engine", _fake_engine([]))
+
+    main.parlay_builder(min_prob=0.5)
+
+    assert captured["max_uses"] == 2
+
+
+def test_parlay_builder_max_leg_reuse_param_overrides_default(monkeypatch):
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        return []
+
+    monkeypatch.setattr(main.builder_core, "build", _fake_build)
+    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor: [{"x": 1}])
+    monkeypatch.setattr(main, "engine", _fake_engine([]))
+
+    main.parlay_builder(min_prob=0.5, max_leg_reuse=1)
+
+    assert captured["max_uses"] == 1
+
+
 # --- GET /parlay-builder/saved?sport= (NFL builder sub-project #2) ----------
 
 def test_saved_builder_parlays_has_sport_param_defaulting_to_mlb():
