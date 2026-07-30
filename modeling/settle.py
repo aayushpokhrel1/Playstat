@@ -67,21 +67,28 @@ def settle_moneyline_leg(side, home_pts, away_pts):
     return "won" if side == winner else "lost"
 
 
+# Final game statuses. MLB/NFL only ever emit "FT" for a played game; NBA
+# (API-Sports basketball) marks an over-time final as "AOT" (after over-time),
+# which is equally final and MUST settle — otherwise every NBA overtime game
+# strands pending forever (caught in NBA build verification 2026-07-30).
+_FINAL_GAME_STATUSES = {"FT", "AOT"}
+
+
 def leg_status(game_status, actual):
     """Classify a leg's settlement readiness from its game status and actual
     stat value (None/NaN when no stat row exists for this player/game/stat or
     team/game/market). Pure and DB-free — the decision used by settle_parlays,
     settle_team_parlays and settle_builder_parlays.
 
-    - "pending": the game is not yet FT. Not an error — the whole parlay is
-      skipped and retried on a later run.
-    - "void": the game IS FT but there is no stat row for this leg (a
+    - "pending": the game is not yet final (not FT/AOT). Not an error — the whole
+      parlay is skipped and retried on a later run.
+    - "void": the game IS final but there is no stat row for this leg (a
       scratched/DNP player prop, or a missing team-stat aggregate). Standard
       sportsbook rule: void the leg like a push rather than strand the
       parlay pending forever (README §15.10 KNOWN ISSUE / §15.9 item 6).
-    - "ready": the game is FT and a stat value exists — settle_leg can score it.
+    - "ready": the game is final and a stat value exists — settle_leg can score it.
     """
-    if game_status != "FT":
+    if game_status not in _FINAL_GAME_STATUSES:
         return "pending"
     if actual is None or actual != actual:  # NaN != NaN — no pandas import needed
         return "void"

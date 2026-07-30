@@ -61,3 +61,30 @@ def test_nba_daily_cadence_and_game_tier_class():
     assert _team_class("nba") == "game_tier"       # shared with NFL
     assert _team_class("nfl") == "game_tier"
     assert _team_class("mlb") == "team_tier"       # unchanged
+
+
+def test_aot_overtime_game_settles_as_final():
+    # NBA over-time finals come in as "AOT", not "FT". They MUST settle, not
+    # strand pending forever (caught in NBA build verification 2026-07-30).
+    from modeling.settle import leg_status
+    assert leg_status("AOT", 100) == "ready"       # final + stat present
+    assert leg_status("FT", 100) == "ready"        # regulation final unchanged
+    assert leg_status("AOT", None) == "void"       # final but no stat -> void, not pending
+    assert leg_status("NS", None) == "pending"     # not started
+    assert leg_status("S", 100) == "pending"       # scheduled
+
+
+def test_nba_game_tier_scoring_on_real_final_score():
+    # Real backfilled NBA game 372186 (2023-2024): home 111, away 99 (margin +12).
+    from modeling.settle import game_total, settle_spread_leg, settle_moneyline_leg, settle_leg
+    home, away = 111, 99
+    assert game_total(home, away) == 210.0
+    # moneyline: home won by 12
+    assert settle_moneyline_leg("home", home, away) == "won"
+    assert settle_moneyline_leg("away", home, away) == "lost"
+    # spread: home -5.5 covered (12 - 5.5 = 6.5 > 0); away +5.5 did not
+    assert settle_spread_leg("home", home, away, -5.5) == "won"
+    assert settle_spread_leg("away", home, away, -5.5) == "lost"
+    # total 210 vs line 208.5: over hits, under misses
+    assert settle_leg("over", 210.0, 208.5) == "hit"
+    assert settle_leg("under", 210.0, 208.5) == "miss"
