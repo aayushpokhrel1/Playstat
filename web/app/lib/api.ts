@@ -138,7 +138,7 @@ export type SavedBuilderParlay = BuilderConstruction & {
 };
 
 export type BuilderRecord = {
-  tier: "player" | "team";
+  tier: "player" | "team" | "game";
   target_payout: number;
   n: number;
   wins: number;
@@ -231,22 +231,29 @@ export function getBetPerformance() {
 
 // Dashboard-only builder record split by tier + target payout (README §15);
 // /bet-performance is unchanged and still feeds web/app/clv.
-export function getBuilderRecord() {
-  return apiGet<BuilderRecord[]>("/parlay-builder/record");
+// sport is additive (default "mlb", NFL builder chain #4a/#4b) — existing
+// callers passing no sport keep getting exactly MLB rows, unchanged.
+export function getBuilderRecord(sport = "mlb") {
+  return apiGet<BuilderRecord[]>(`/parlay-builder/record?sport=${sport}`);
 }
 
 // Per-day drill-down of the same settled-builder data (README §15 follow-on).
-export function getBuilderRecordDaily() {
-  return apiGet<BuilderRecordDaily[]>("/parlay-builder/record/daily");
+export function getBuilderRecordDaily(sport = "mlb") {
+  return apiGet<BuilderRecordDaily[]>(`/parlay-builder/record/daily?sport=${sport}`);
 }
 
 // tier is additive (README §15 Change 3): "player" is the default and
 // matches today's exact saved shape (the mixed player+team across-game
 // tier); "team" is the new dedicated, higher-variance NRFI/F5-only tier,
-// which may legitimately be empty on any given slate; "all" skips the
-// class filter server-side.
-export function getSavedBuilderParlays(limit = 10, tier: "player" | "team" | "all" = "player") {
-  return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}&tier=${tier}`);
+// which may legitimately be empty on any given slate; "game" is the NFL
+// game-market tier (#4a/#4b); "all" skips the class filter server-side.
+// sport is additive (default "mlb") — existing callers unchanged.
+export function getSavedBuilderParlays(
+  limit = 10,
+  tier: "player" | "team" | "game" | "all" = "player",
+  sport = "mlb",
+) {
+  return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}&tier=${tier}&sport=${sport}`);
 }
 
 export function searchBuilder(params: BuilderSearchParams) {
