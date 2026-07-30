@@ -170,7 +170,7 @@ export default async function BuilderPage({
               <div className={styles.sectionHeader}>
                 <h2 className={styles.sectionTitle}>{cfg.playerHeading}</h2>
               </div>
-              <BuilderControls initial={savedLatest} />
+              <BuilderControls initial={savedLatest} sport={sport} />
             </section>
 
             <section className={styles.section} aria-label={cfg.tier2Heading}>

@@ -10,7 +10,13 @@ type Mode = "payout" | "prob";
 const DEFAULT_PAYOUT = 2.0;
 const DEFAULT_PROB = 0.75;
 
-export default function BuilderControls({ initial }: { initial: SavedBuilderParlay[] }) {
+export default function BuilderControls({
+  initial,
+  sport = "mlb",
+}: {
+  initial: SavedBuilderParlay[];
+  sport?: string;
+}) {
   const [mode, setMode] = useState<Mode>("payout");
   const [payout, setPayout] = useState(DEFAULT_PAYOUT);
   const [prob, setProb] = useState(DEFAULT_PROB);

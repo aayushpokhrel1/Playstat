@@ -573,8 +573,14 @@ def parlay_builder(
     max_legs: int = builder_core.DEFAULT_MAX_LEGS,
     top_n: int = 10,
     max_leg_reuse: int = 2,
+    sport: str = "mlb",
 ):
     """Low-risk parlay constructions ranked by de-vigged MARKET probability.
+
+    sport (default "mlb", additive/Budgerr-safe) restricts the candidate legs to
+    that sport's current slate and applies its slate window (MLB/NBA daily, NFL
+    weekly) — so the dashboard's per-sport "Build" returns that sport's parlays,
+    not MLB's.
 
     Returns an object `{constructions, truncated, nodes_searched, exhaustive}` —
     truncated/exhaustive report whether the search hit its node budget and
@@ -605,7 +611,9 @@ def parlay_builder(
     if max_legs < min_legs:
         raise HTTPException(status_code=422, detail="max_legs must be >= min_legs")
 
-    legs = builder.load_legs(engine, floor)
+    legs = builder.load_legs(
+        engine, floor, sport=sport, window_days=builder.SLATE_WINDOW_DAYS.get(sport, 0)
+    )
     if not legs:
         return BuilderSearchOut(constructions=[], truncated=False, nodes_searched=0, exhaustive=True)
     stats: dict = {}

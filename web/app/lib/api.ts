@@ -93,6 +93,7 @@ export type BuilderSearchParams = {
   target_payout?: number;
   min_prob?: number;
   max_legs?: number;
+  sport?: string;
 };
 
 // Server-only: apiGet is called exclusively from server components, so the
@@ -171,5 +172,6 @@ export function searchBuilder(params: BuilderSearchParams) {
   if (params.target_payout != null) q.set("target_payout", String(params.target_payout));
   if (params.min_prob != null) q.set("min_prob", String(params.min_prob));
   if (params.max_legs != null) q.set("max_legs", String(params.max_legs));
+  if (params.sport != null) q.set("sport", params.sport);
   return apiGet<BuilderSearchResult>(`/parlay-builder?${q.toString()}`);
 }

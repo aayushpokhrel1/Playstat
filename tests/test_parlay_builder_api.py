@@ -181,7 +181,7 @@ def test_parlay_builder_returns_object_with_truncation_fields(monkeypatch):
          "decimal_odds": 1.25, "american_odds": -400, "market_prob": 0.80,
          "model_prob": 0.79, "line_value": 0.5, "player_id": 11, "stat_type": "runs", "market": None},
     ]
-    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor: legs)
+    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor, **kw: legs)
     # This endpoint now ALSO resolves team-name context (docs/superpowers/
     # plans/2026-07-28-leg-team-names.md) via batched games/players queries
     # -- main.engine MUST be faked here too, or this would open a real
@@ -222,7 +222,7 @@ def test_parlay_builder_max_leg_reuse_defaults_to_2_and_threads_into_build(monke
         return []
 
     monkeypatch.setattr(main.builder_core, "build", _fake_build)
-    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor: [{"x": 1}])
+    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor, **kw: [{"x": 1}])
     monkeypatch.setattr(main, "engine", _fake_engine([]))
 
     main.parlay_builder(min_prob=0.5)
@@ -238,12 +238,50 @@ def test_parlay_builder_max_leg_reuse_param_overrides_default(monkeypatch):
         return []
 
     monkeypatch.setattr(main.builder_core, "build", _fake_build)
-    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor: [{"x": 1}])
+    monkeypatch.setattr(main.builder, "load_legs", lambda engine, floor, **kw: [{"x": 1}])
     monkeypatch.setattr(main, "engine", _fake_engine([]))
 
     main.parlay_builder(min_prob=0.5, max_leg_reuse=1)
 
     assert captured["max_uses"] == 1
+
+
+# --- GET /parlay-builder?sport= (NBA build 2026-07-30) -----------------------
+# The live "Build" control is rendered on every sport tab, so the search
+# endpoint must scope candidate legs to the requested sport (+ its slate window)
+# or the NBA/NFL tab's Build returns MLB parlays. Additive, default mlb.
+
+def _capture_load_legs(monkeypatch):
+    captured = {}
+
+    def _fake(engine, floor, **kw):
+        captured.update(kw)
+        return []  # empty -> endpoint returns before build/enrichment
+
+    monkeypatch.setattr(main.builder, "load_legs", _fake)
+    monkeypatch.setattr(main, "engine", _fake_engine([]))
+    return captured
+
+
+def test_parlay_builder_sport_defaults_to_mlb_daily_window(monkeypatch):
+    captured = _capture_load_legs(monkeypatch)
+    main.parlay_builder(min_prob=0.5)
+    assert captured["sport"] == "mlb"
+    assert captured["window_days"] == 0
+
+
+def test_parlay_builder_sport_nba_uses_daily_window(monkeypatch):
+    captured = _capture_load_legs(monkeypatch)
+    main.parlay_builder(min_prob=0.5, sport="nba")
+    assert captured["sport"] == "nba"
+    assert captured["window_days"] == 0
+
+
+def test_parlay_builder_sport_nfl_uses_weekly_window(monkeypatch):
+    captured = _capture_load_legs(monkeypatch)
+    main.parlay_builder(min_prob=0.5, sport="nfl")
+    assert captured["sport"] == "nfl"
+    assert captured["window_days"] == 4
 
 
 # --- GET /parlay-builder/saved?sport= (NFL builder sub-project #2) ----------

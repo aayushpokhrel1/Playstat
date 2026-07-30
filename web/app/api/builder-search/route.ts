@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
   const target_payout = numberParam(searchParams, "target_payout");
   const min_prob = numberParam(searchParams, "min_prob");
   const max_legs = numberParam(searchParams, "max_legs");
+  const sportRaw = searchParams.get("sport");
+  const sport = sportRaw === "nfl" || sportRaw === "nba" ? sportRaw : "mlb";
 
   if (target_payout == null && min_prob == null) {
     return NextResponse.json(
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await searchBuilder({ target_payout, min_prob, max_legs });
+    const result = await searchBuilder({ target_payout, min_prob, max_legs, sport });
     return NextResponse.json(result);
   } catch {
     return NextResponse.json({ error: "search failed" }, { status: 502 });
