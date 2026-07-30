@@ -105,6 +105,22 @@ run_chain() {
 	# on the plain fail-fast _step — auto-re-running a real data bug or a 64-min
 	# backtest is wrong.
 	_step_retry() { local n="$1"; shift; _step "$n" "$@" && return 0; local r=$?; echo "=== step $n: retrying after ${r} in 120s ==="; sleep 120; _step "$n" "$@"; return $?; }
+	# NFL builds ONCE PER WEEK — Thursday only (NFL chain #4a, 2026-07-29-nfl-chain-record
+	# spec). NFL bets a weekly Thu..Mon card (builder --sport nfl uses window_days=4);
+	# rebuilding that same slate every day would re-save it ~6x and N-count it in the
+	# paper ledger, so the BUILD is gated to Thursday. Scores + settle run DAILY below
+	# so each game settles as it finishes (TNF->Fri, Sunday->Mon, MNF->Tue). Non-Thursday:
+	# skip, return 0. Offseason Thursday: the builder finds no candidate legs, exits 0.
+	# Called best-effort (see the chain below): an NFL failure is logged but never
+	# aborts the MLB chain or pages — NFL is secondary/seasonal, live at preseason (~Aug).
+	_nfl_weekly_build() {
+		if [ "$(date +%u)" -ne 4 ]; then echo "=== nfl build: skipped (not Thursday) ==="; return 0; fi
+		_step_retry nfl_odds  "$PY" -m ingestion.odds_ingest --sport nfl &&
+			_step nfl_builder_1.4 "$PY" -m optimizer.builder --sport nfl --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nfl_builder_2.0 "$PY" -m optimizer.builder --sport nfl --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nfl_game_1.4    "$PY" -m optimizer.builder --sport nfl --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nfl_game_2.0    "$PY" -m optimizer.builder --sport nfl --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
+	}
 	_step_retry stats       "$PY" -m ingestion.mlb_backfill --only stats &&
 		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
 		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
@@ -114,6 +130,8 @@ run_chain() {
 		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step clv              "$PY" -m modeling.clv &&
+		{ _nfl_weekly_build || echo "=== nfl weekly build: FAILED (non-fatal, MLB chain continues) ==="; } &&
+		{ _step_retry nfl_scores "$PY" -m ingestion.nfl_backfill --only games || echo "=== nfl_scores: FAILED (non-fatal) ==="; } &&
 		_step settle           "$PY" -m modeling.settle
 	# MODEL PIPELINE SHELVED 2026-07-29 (README §16, user-approved 2026-07-28,
 	# Budgerr-coordinated + acked). The four model steps below ran here and are
