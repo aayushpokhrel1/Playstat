@@ -43,6 +43,15 @@ SPORTS = {
         "odds_league_id": "NFL",
         "id_offset": 200_000_000,
     },
+    # MLS (soccer) — API-Sports FOOTBALL API (different host/endpoints than
+    # basketball; same key). League 253. Free tier: seasons 2022-2024 only
+    # (current season is paid). Ingested by ingestion/soccer_backfill.py.
+    "mls": {
+        "base_url": "https://v3.football.api-sports.io",
+        "league_id": 253,
+        "odds_league_id": "MLS",
+        "id_offset": 300_000_000,
+    },
 }
 
 NBA_LEAGUE_ID = SPORTS["nba"]["league_id"]
