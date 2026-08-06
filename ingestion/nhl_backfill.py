@@ -90,10 +90,32 @@ def nhl_raw_game_id(game_id):  # inverse, for boxscore refetch
     return int(game_id) - NHL_ID_OFFSET + NHL_GAME_ID_EPOCH
 
 
-def team_full_name(place, common):
-    """'New York' + 'Rangers' -> 'New York Rangers' — placeName.default + commonName.default
-    from the schedule feed ('Montréal Canadiens', 'St. Louis Blues', etc.)."""
-    return f"{place} {common}".strip()
+def parse_team_names(standings_payload):
+    """{teamAbbrev.default -> teamName.default} from /standings/now — the
+    authoritative full-name source for the 32 current teams, clean for the NY
+    teams and accents ('New York Rangers', 'Montréal Canadiens', 'St. Louis
+    Blues'). The /score feed's team block only carries the common name
+    ('Sabres') + abbrev, so full names are resolved by abbrev against this map.
+    """
+    out = {}
+    for row in standings_payload.get("standings", []):
+        ab = (row.get("teamAbbrev") or {}).get("default")
+        full = (row.get("teamName") or {}).get("default")
+        if ab and full:
+            out[ab] = full
+    return out
+
+
+def fetch_team_names(client):
+    return parse_team_names(client.get("/standings/now"))
+
+
+def resolve_team_name(team_block, names_by_abbrev):
+    """Full name for a /score-feed team block: the standings map by abbrev, else
+    the feed's common name (e.g. a relocated team absent from current standings —
+    stored as its common name, which the nickname map falls back on harmlessly).
+    """
+    return names_by_abbrev.get(team_block.get("abbrev")) or (team_block.get("name") or {}).get("default")
 
 
 def extract_skater_stats(skater):
@@ -170,6 +192,10 @@ def backfill_games(client, engine, season):
     start_date = f"{season}-09-15"
     end_date = f"{season + 1}-06-30"
 
+    # The /score feed's team block carries only the common name ('Sabres'); resolve
+    # full names ('Buffalo Sabres') by abbrev against one /standings/now pull.
+    team_names = fetch_team_names(client)
+
     games_count = 0
     finished = []
     date = start_date
@@ -190,8 +216,8 @@ def backfill_games(client, engine, season):
                         {
                             "team_id": nhl_team_id(t["id"]),
                             "sport": "nhl",
-                            # placeName.default + commonName.default, e.g. "New York Rangers".
-                            "name": team_full_name(t["placeName"]["default"], t["commonName"]["default"]),
+                            # Full name via /standings/now by abbrev, e.g. "New York Rangers".
+                            "name": resolve_team_name(t, team_names),
                             # No clean conference in this feed — leave NULL (matches
                             # the NBA-era nullable conference column).
                             "conference": None,
@@ -251,7 +277,13 @@ def _upsert_player_rows(conn, game, boxscore):
         team_block = by_game.get(side) or {}
         for group in ("forwards", "defense", "goalies"):
             for entry in team_block.get(group) or []:
-                player_id = nhl_player_id(entry["id"])
+                player_id = nhl_player_id(entry["playerId"])
+                # The boxscore carries only an abbreviated name ("Z. Benson") and
+                # no firstName/lastName; prefer the full name if a future payload
+                # adds it, else store the abbreviated name. FOLLOW-UP: enrich to
+                # full names via /roster before player-prop matching goes live at
+                # preseason (names are an updatable players-table attribute keyed
+                # on player_id — no box-score re-backfill needed).
                 first = (entry.get("firstName") or {}).get("default")
                 last = (entry.get("lastName") or {}).get("default")
                 if first and last:

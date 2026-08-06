@@ -4,7 +4,8 @@ backfill's DB/network paths are covered by the architect's live smoke (Task 5)."
 
 from ingestion.nhl_backfill import (
     extract_goalie_stats, extract_skater_stats, final_status, nhl_game_id,
-    nhl_player_id, nhl_raw_game_id, nhl_team_id, team_full_name,
+    nhl_player_id, nhl_raw_game_id, nhl_team_id, parse_team_names,
+    resolve_team_name,
 )
 
 
@@ -61,11 +62,25 @@ def test_final_status():
     assert final_status({"gameState": "FINAL", "gameOutcome": {"lastPeriodType": "SO"}}) == "FT"
 
 
-def test_team_name_from_feed():
-    # placeName.default + commonName.default from the schedule feed.
-    assert team_full_name("New York", "Rangers") == "New York Rangers"
-    assert team_full_name("St. Louis", "Blues") == "St. Louis Blues"
-    assert team_full_name("Montréal", "Canadiens") == "Montréal Canadiens"
+def test_parse_team_names():
+    # /standings/now teamName.default is the authoritative full name (clean for
+    # the NY teams + accents, unlike a placeName+common concat).
+    payload = {"standings": [
+        {"teamAbbrev": {"default": "NYR"}, "teamName": {"default": "New York Rangers"}},
+        {"teamAbbrev": {"default": "MTL"}, "teamName": {"default": "Montréal Canadiens"}},
+        {"teamAbbrev": {"default": "STL"}, "teamName": {"default": "St. Louis Blues"}},
+    ]}
+    names = parse_team_names(payload)
+    assert names == {"NYR": "New York Rangers", "MTL": "Montréal Canadiens", "STL": "St. Louis Blues"}
+
+
+def test_resolve_team_name():
+    names = {"BUF": "Buffalo Sabres"}
+    # /score-feed team block: standings map by abbrev wins.
+    assert resolve_team_name({"abbrev": "BUF", "name": {"default": "Sabres"}}, names) == "Buffalo Sabres"
+    # Fallback to the feed's common name when the abbrev isn't in standings
+    # (e.g. a relocated team absent from current standings).
+    assert resolve_team_name({"abbrev": "ARI", "name": {"default": "Coyotes"}}, names) == "Coyotes"
 
 
 def test_nhl_maps_present():
