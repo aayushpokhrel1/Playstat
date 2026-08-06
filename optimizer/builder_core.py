@@ -6,7 +6,7 @@ models lack per-game resolution and overstate heavy-favorite safety, so the
 book's de-vigged price is the best-calibrated probability available.
 """
 
-from modeling.edges import devig
+from optimizer.devig import devig
 from optimizer.parlay import american_to_decimal
 
 # No single leg may be worse than this to hit (de-vigged market probability).

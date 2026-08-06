@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from modeling.settle import (
     builder_leg_key, leg_status, parlay_result, settle_builder_parlays,
-    settle_leg, settle_parlays, settle_team_parlays,
+    settle_leg,
 )
 
 
@@ -95,13 +95,13 @@ def test_parlay_result_miss_plus_void_is_a_loss():
     assert pnl == pytest.approx(-1.0)
 
 
-# --- regression guards: all three settle_* paths share the void rule --------
-# (README §15.10: "Both gaps are shared by the settle_parlays/settle_team_parlays
-# paths.") No live DB is available to exercise these end to end (ingestion.db.
-# get_engine() points at production), so this asserts the void branch is wired
-# into each function's source rather than running it.
+# --- regression guard: the builder settle path wires in the DNP void rule ----
+# (README §15.10 void rule.) No live DB is available to exercise this end to end
+# (ingestion.db.get_engine() points at production), so this asserts the void
+# branch is wired into the function's source rather than running it. The legacy
+# settle_parlays/settle_team_parlays paths were deleted with the model (§16 #3B).
 
-@pytest.mark.parametrize("fn", [settle_parlays, settle_team_parlays, settle_builder_parlays])
+@pytest.mark.parametrize("fn", [settle_builder_parlays])
 def test_settle_function_voids_dnp_legs_via_leg_status(fn):
     source = inspect.getsource(fn)
     assert "leg_status(" in source

@@ -9,10 +9,10 @@ import pytest
 
 from modeling.settle import (
     aggregate_bet_performance, bet_type_label, game_total, parlay_result, settle_builder_parlays,
-    settle_leg, settle_moneyline_leg, settle_parlays, settle_spread_leg, settle_team_parlays,
+    settle_leg, settle_moneyline_leg, settle_spread_leg,
     single_pnl,
 )
-from modeling.edges import devig, odds_to_probability
+from optimizer.devig import devig, odds_to_probability
 from optimizer.parlay import american_to_decimal
 
 
@@ -217,7 +217,7 @@ def test_aggregate_bet_performance_empty_is_empty():
 
 @pytest.mark.parametrize(
     "fn, kind",
-    [(settle_parlays, "player"), (settle_team_parlays, "team"), (settle_builder_parlays, "builder")],
+    [(settle_builder_parlays, "builder")],
 )
 def test_settle_functions_scope_candidates_to_their_own_kind(fn, kind):
     source = inspect.getsource(fn)

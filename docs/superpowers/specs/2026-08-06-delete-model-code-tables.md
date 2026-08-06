@@ -52,10 +52,11 @@ New migration `db/migrations/0XX_drop_model_tables.sql`: `DROP TABLE IF EXISTS m
 
 ## Phasing (all reversible until the migration)
 
-1. **Extract devig** → `optimizer/devig.py`; update `builder_core.py`, `clv.py`(about to be deleted anyway), `test_odds.py`, `test_odds_nfl.py`. Run tests. Commit.
-2. **Delete model code + settle surgery + chain edit + tests**; keep everything green (the builder + settle_builder path + devig tests). Commit.
-3. **API + web**: remove the 5 endpoints + dead imports; remove the web predictions section. `tsc`/`next build` clean. Commit. Kickstart API.
-4. **Live migration** (backup → drop) — architect reserved lane, after user go. Commit the migration file + README updates (§7.1/§8/§11/§16). Push.
+**Ordering constraint:** `api/main.py` imports `modeling.train` + `modeling.distributions` (for the adjacent endpoints) and `api.main` is imported by the test suite — so the API endpoints + those imports must go BEFORE the model modules are deleted, else pytest can't import `api.main`. Hence API/web first, then code deletion.
+
+1. **API + web** (Phase 1): remove the 5 endpoints (`/edge-distributions`, `/model-performance`, `/players/{id}/predictions`, `/backtest-history`, `/clv-summary`) + their now-dead schema/`train`/`distributions` imports from `api/main.py`; remove the predictions section from `web/app/players/[id]/page.tsx` (+ `getPlayerPredictions`, `Prediction` type). Run pytest + `tsc`/`next build`. Commit. Kickstart API.
+2. **devig extraction + model code deletion** (Phase 2): create `optimizer/devig.py` (`odds_to_probability` + `devig`, pure); repoint `optimizer/builder_core.py` + `test_odds.py`/`test_odds_nfl.py` imports. Delete `modeling/{features,predict,predict_upcoming,train,backtest,calibration,eval_discrete,distributions,edges,clv,f5,team_edges}.py`. `settle.py` surgery (delete `settle_parlays`/`settle_team_parlays`/`settle_edges`/`team_leg_actual`/`_rec_snapshot`(verify); shrink `settle()`). Delete tests `test_{distributions,pmf,train_helpers,f5_model,f5_reconstruct,team_edges,settle_team}.py`; prune model-path tests from `test_settle.py`. Edit `daily_chain.sh` (drop `clv` step + commented block + restore marker). Run pytest green. Commit. Kickstart API (`settle.py`/`builder_core.py` are API-imported). NOTE: `optimizer/parlay.py`'s `load_candidate_legs`/`main` and `optimizer/team_parlay.py`'s `load_team_legs` read the dropping `edges`/`game_edges` tables — these are the pre-builder OPTIMIZER remnants (out of the model scope), left DORMANT + documented in §11 (they're not in the chain, not imported by kept code, DB-free tests unaffected).
+3. **Live migration** (Phase 3, reserved lane): `pg_dump` the 6 tables to scratchpad, then `db/migrations/008_drop_model_tables.sql` drops them. Commit migration + README updates (§7.1/§8/§11/§16). Kickstart. Verify. Push.
 
 ## Risks / gates
 

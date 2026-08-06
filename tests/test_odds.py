@@ -8,7 +8,7 @@ Run with: python -m pytest tests/test_odds.py -q
 
 import pytest
 
-from modeling.edges import devig, odds_to_probability
+from optimizer.devig import devig, odds_to_probability
 
 
 # --- odds_to_probability ------------------------------------------------------

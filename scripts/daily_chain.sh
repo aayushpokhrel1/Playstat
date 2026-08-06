@@ -174,7 +174,6 @@ run_chain() {
 		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
-		_step clv              "$PY" -m modeling.clv &&
 		{ _nfl_weekly_build || echo "=== nfl weekly build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry nfl_scores "$PY" -m ingestion.nfl_backfill --only games || echo "=== nfl_scores: FAILED (non-fatal) ==="; } &&
 		{ _nba_daily_build || echo "=== nba daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
@@ -186,19 +185,15 @@ run_chain() {
 		{ _nhl_daily_build || echo "=== nhl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry nhl_scores "$PY" -m ingestion.nhl_backfill --only games || echo "=== nhl_scores: FAILED (non-fatal) ==="; } &&
 		_step settle           "$PY" -m modeling.settle
-	# MODEL PIPELINE SHELVED 2026-07-29 (README §16, user-approved 2026-07-28,
-	# Budgerr-coordinated + acked). The four model steps below ran here and are
-	# FROZEN, not deleted — the market-ranked builder ranks on de-vigged MARKET
-	# odds and never used them (model_prob is a context-only LEFT JOIN). Dropping
-	# them cuts ~1.5-2h off the nightly run (backtest alone was ~64min). The
-	# /edges, /game-predictions and /parlay-recommendations endpoints keep serving
-	# their LAST-COMPUTED rows (nothing 404s; they just stop updating). Reversible:
-	# re-append these four steps (chained with && off settle above) to resume.
-	#
-	#	_step features  "$PY" -m modeling.features --sport mlb --upcoming-days 2 &&
-	#	_step predict   "$PY" -m modeling.predict_upcoming --sport mlb --days 2 &&
-	#	_step edges     "$PY" -m modeling.edges &&
-	#	_step backtest  "$PY" -m modeling.backtest --sport mlb
+	# MODEL PIPELINE DELETED 2026-08-06 (README §16, roadmap #3B, user-approved).
+	# The model was shelved 2026-07-29 (frozen steps commented out here) and then
+	# DELETED — the four steps (features/predict_upcoming/edges/backtest) and their
+	# modules/tables are gone, along with the clv step. The market-ranked builder
+	# never depended on them (model_prob was a context-only LEFT JOIN, now always
+	# None), so the chain above (odds -> first_inning -> builders -> multi-sport
+	# -> settle) is unchanged. The /edges, /game-predictions and
+	# /parlay-recommendations endpoints were removed (#3A). To resurrect the model,
+	# recover the deleted modules from git history (pre-3fb41e0 commits).
 }
 # The old `optimizer.parlay --target-payout 2.0 --max-legs 3` step lived here and
 # OOM-died (SIGKILL) nightly — 1,060 edges > 3% meant C(1060,3) ~ 198M combinations
