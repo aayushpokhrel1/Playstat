@@ -1,4 +1,4 @@
-// Static full-name -> nickname map for MLB (30) and NBA (30) teams
+// Static full-name -> nickname map for MLB (30), NBA (30) and MLS (29) teams
 // (NFL legs fall back to full names — no NFL block here yet; harmless, NFL offseason)
 // (docs/superpowers/plans/2026-07-28-leg-team-names.md).
 //
@@ -67,6 +67,35 @@ const TEAM_NICKNAMES: Record<string, string> = {
   "Toronto Raptors": "Raptors",
   "Utah Jazz": "Jazz",
   "Washington Wizards": "Wizards",
+  "Atlanta United FC": "Atlanta Utd",
+  "Austin": "Austin",
+  "CF Montreal": "Montréal",
+  "Charlotte": "Charlotte",
+  "Chicago Fire": "Fire",
+  "Colorado Rapids": "Rapids",
+  "Columbus Crew": "Crew",
+  "DC United": "D.C. United",
+  "FC Cincinnati": "Cincinnati",
+  "FC Dallas": "Dallas",
+  "Houston Dynamo": "Dynamo",
+  "Inter Miami": "Inter Miami",
+  "Los Angeles FC": "LAFC",
+  "Los Angeles Galaxy": "LA Galaxy",
+  "Minnesota United FC": "Minnesota Utd",
+  "Nashville SC": "Nashville",
+  "New England Revolution": "Revolution",
+  "New York City FC": "NYCFC",
+  "New York Red Bulls": "Red Bulls",
+  "Orlando City SC": "Orlando City",
+  "Philadelphia Union": "Union",
+  "Portland Timbers": "Timbers",
+  "Real Salt Lake": "RSL",
+  "San Jose Earthquakes": "Earthquakes",
+  "Seattle Sounders": "Sounders",
+  "Sporting Kansas City": "Sporting KC",
+  "St. Louis City": "St. Louis",
+  "Toronto FC": "Toronto",
+  "Vancouver Whitecaps": "Whitecaps",
 };
 
 // Map lookup, fallback to the full name for anything unmapped (never wrong,
