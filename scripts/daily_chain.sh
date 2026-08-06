@@ -143,6 +143,16 @@ run_chain() {
 			_step mls_game_1.4    "$PY" -m optimizer.builder --sport mls --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step mls_game_2.0    "$PY" -m optimizer.builder --sport mls --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
 	}
+	# UCL (soccer) — DAILY like MLS. Same shared soccer maps, league 2. Best-effort:
+	# a UCL failure logs but never aborts the MLB chain. Live only with a paid
+	# API-Sports plan (current-season stats); inert on free.
+	_ucl_daily_build() {
+		_step_retry ucl_odds  "$PY" -m ingestion.odds_ingest --sport ucl &&
+			_step ucl_builder_1.4 "$PY" -m optimizer.builder --sport ucl --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step ucl_builder_2.0 "$PY" -m optimizer.builder --sport ucl --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step ucl_game_1.4    "$PY" -m optimizer.builder --sport ucl --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step ucl_game_2.0    "$PY" -m optimizer.builder --sport ucl --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
+	}
 	_step_retry stats       "$PY" -m ingestion.mlb_backfill --only stats &&
 		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
 		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
@@ -158,6 +168,8 @@ run_chain() {
 		{ _step_retry nba_scores "$PY" -m ingestion.backfill --sport nba --only games --season current || echo "=== nba_scores: FAILED (non-fatal) ==="; } &&
 		{ _mls_daily_build || echo "=== mls daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry mls_scores "$PY" -m ingestion.soccer_backfill --season 2024 --only fixtures || echo "=== mls_scores: FAILED (non-fatal) ==="; } &&
+		{ _ucl_daily_build || echo "=== ucl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
+		{ _step_retry ucl_scores "$PY" -m ingestion.soccer_backfill --sport ucl --season 2024 --only fixtures || echo "=== ucl_scores: FAILED (non-fatal) ==="; } &&
 		_step settle           "$PY" -m modeling.settle
 	# MODEL PIPELINE SHELVED 2026-07-29 (README §16, user-approved 2026-07-28,
 	# Budgerr-coordinated + acked). The four model steps below ran here and are
