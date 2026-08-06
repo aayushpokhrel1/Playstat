@@ -49,7 +49,7 @@ Use the **Agent tool** with `subagent_type: "general-purpose"`, `run_in_backgrou
 
 ## Production surfaces to protect
 
-- **Budgerr contract**: `/edges`, `/box-scores`, `/games`, `/game-predictions`, `/parlay-recommendations` response shapes are consumed by the separate Budgerr project — **additive changes only**. Auth: Budgerr's named API key is in `.env` (`PLAYSTAT_API_KEYS`); see README §7.1.
+- **Budgerr contract**: `/box-scores`, `/games`, `/parlay-builder/saved` response shapes are consumed by the separate Budgerr project — **additive changes only**. (The model endpoints `/edges`, `/game-predictions`, `/parlay-recommendations` were consumed historically but were REMOVED 2026-08-06 after Budgerr migrated onto `/parlay-builder/saved`; see README §7.1/§16.) Auth: Budgerr's named API key is in `.env` (`PLAYSTAT_API_KEYS`); see README §7.1.
 - **Daily chain** `com.playstat.mlb` (8:30am, logs to `logs/mlb.log`): box scores → linescores → CLV → features → predict_upcoming → odds → first-inning → edges → backtest → parlay. Every module's CLI must stay compatible. `com.playstat.api` serves :8000 always-on. `com.playstat.backfill` (NBA) self-disables when done.
 - **The dashboard login + API keys** are live; browser verification requires logging in (credentials with the user; hash in `web/.env.local`).
 

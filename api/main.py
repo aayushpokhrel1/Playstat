@@ -2,7 +2,7 @@ import json
 import os
 from datetime import date as date_type
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
@@ -18,13 +18,9 @@ from api.schemas import (
     BuilderSearchOut,
     ClvSummaryOut,
     EdgeDistributionOut,
-    EdgeOut,
     GameLogEntry,
     GameOut,
-    GamePredictionOut,
     ModelPerformanceOut,
-    ParlayLeg,
-    ParlayRecommendationOut,
     PlayerOut,
     PmfPoint,
     PredictionOut,
@@ -50,25 +46,6 @@ app.add_middleware(
 )
 
 engine = get_engine()
-
-
-# --- Deprecation of the frozen model-serving endpoints (README §16 / §7.1) ---
-# /edges, /game-predictions, /parlay-recommendations served model rows frozen
-# since the 2026-07-29 model shelving (§16) and have no live consumer — Budgerr
-# migrated its /edges quick-entry prefill + Tonight edge/NRFI chips onto
-# /parlay-builder/saved and acked (confirmed 2026-08-06). Phased wind-down:
-# these three now return [] with RFC 8594 / RFC 9745 deprecation headers, and
-# the routes are removed in the following commit (Sunset date below is the
-# formal record; removal follows immediately since Budgerr already migrated).
-_DEPRECATION_SUNSET = "Wed, 20 Aug 2026 00:00:00 GMT"
-
-
-def _mark_deprecated(response: Response) -> None:
-    """Stamp deprecation headers pointing consumers at the forward source
-    (/parlay-builder/saved). Called by the three shelved model endpoints."""
-    response.headers["Deprecation"] = "true"
-    response.headers["Sunset"] = _DEPRECATION_SUNSET
-    response.headers["Link"] = '</parlay-builder/saved>; rel="successor-version"'
 
 
 @app.get("/health")
@@ -272,15 +249,6 @@ def box_scores(date: date_type, sport: str | None = None):
     return results
 
 
-@app.get("/edges", response_model=list[EdgeOut])
-def list_edges(response: Response):
-    """DEPRECATED (README §16, Sunset 2026-08-20) — the model is shelved and
-    this served rows frozen since 2026-07-29. Now returns []. Forward source
-    for consumers: /parlay-builder/saved."""
-    _mark_deprecated(response)
-    return []
-
-
 @app.get("/edge-distributions", response_model=list[EdgeDistributionOut])
 def edge_distributions():
     """Full predictive PMF behind every current positive edge (README §14.5) —
@@ -351,16 +319,6 @@ def edge_distributions():
             )
         )
     return results
-
-
-@app.get("/game-predictions", response_model=list[GamePredictionOut])
-def game_predictions(response: Response, date: date_type | None = None, sport: str | None = None):
-    """DEPRECATED (README §16, Sunset 2026-08-20) — game-level model outputs,
-    frozen since the 2026-07-29 shelving. Now returns []. The date/sport query
-    params are retained so any lingering caller's URL still parses. Forward
-    source: /parlay-builder/saved."""
-    _mark_deprecated(response)
-    return []
 
 
 def _as_legs_list(raw):
@@ -459,16 +417,6 @@ def _load_builder_team_context(engine, game_ids, player_ids):
                 ).fetchall()
             )
     return games, players
-
-
-@app.get("/parlay-recommendations", response_model=list[ParlayRecommendationOut])
-def list_parlay_recommendations(response: Response, limit: int = 10):
-    """DEPRECATED (README §16, Sunset 2026-08-20) — the model-ranked parlay
-    leads, frozen since the 2026-07-29 shelving. Now returns []. The `limit`
-    query param is retained for URL compatibility. Forward source:
-    /parlay-builder/saved (?tier=all)."""
-    _mark_deprecated(response)
-    return []
 
 
 @app.get("/parlay-builder", response_model=BuilderSearchOut)
