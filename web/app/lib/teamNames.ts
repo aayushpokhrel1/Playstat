@@ -1,4 +1,7 @@
-// Static full-name -> nickname map for MLB (30), NBA (30) and MLS (29) teams
+// Static full-name -> nickname map for MLB (30), NBA (30), MLS (29) teams + a
+// partial UCL marquee set. UCL has 145 rotating clubs (incl. qualifiers), so most
+// fall back to their full name (already short, never wrong) — only long marquee
+// names are shortened here (exact DB names, verified 2026-08-05).
 // (NFL legs fall back to full names — no NFL block here yet; harmless, NFL offseason)
 // (docs/superpowers/plans/2026-07-28-leg-team-names.md).
 //
@@ -96,6 +99,20 @@ const TEAM_NICKNAMES: Record<string, string> = {
   "St. Louis City": "St. Louis",
   "Toronto FC": "Toronto",
   "Vancouver Whitecaps": "Whitecaps",
+  // UCL (partial — most of the 145 clubs fall back to full names):
+  "Paris Saint Germain": "PSG",
+  "Manchester City": "Man City",
+  "Manchester United": "Man Utd",
+  "Bayern München": "Bayern",
+  "Borussia Dortmund": "Dortmund",
+  "Atletico Madrid": "Atlético",
+  "Bayer Leverkusen": "Leverkusen",
+  "Eintracht Frankfurt": "Frankfurt",
+  "Red Bull Salzburg": "Salzburg",
+  "Shakhtar Donetsk": "Shakhtar",
+  "Olympiakos Piraeus": "Olympiakos",
+  "Club Brugge KV": "Club Brugge",
+  "BSC Young Boys": "Young Boys",
 };
 
 // Map lookup, fallback to the full name for anything unmapped (never wrong,

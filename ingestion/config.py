@@ -55,11 +55,16 @@ SPORTS = {
     # UEFA Champions League (soccer) — SAME API-Sports FOOTBALL host/key as MLS,
     # league 2 (LIVE-VERIFIED 2026-08-05: 279 fixtures/2024, FT/AET/PEN). Free tier:
     # seasons 2022-2024 only (current is paid). Ingested by soccer_backfill --sport ucl.
+    # id_offset is +500M, NOT +400M: NFL's game_id is 200M + season*100000 + ...
+    # (nfl_backfill), so NFL PHYSICALLY sits at ~402M+ (2023) and climbs +0.1M/season,
+    # squatting in the 400M band despite its +200M label. +400M UCL would collide with
+    # NFL once raw fixture ids pass ~2.3M (imminent in the live era); +500M clears NFL's
+    # whole realistic span (200M+2099*1e5 ≈ 410M < 500M). See README §11. (2026-08-05)
     "ucl": {
         "base_url": "https://v3.football.api-sports.io",
         "league_id": 2,
         "odds_league_id": "UEFA_CHAMPIONS_LEAGUE",
-        "id_offset": 400_000_000,
+        "id_offset": 500_000_000,
     },
 }
 
