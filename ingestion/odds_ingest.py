@@ -53,6 +53,13 @@ STAT_MAPS = {
         "passing_touchdowns": "passing_tds",
         "passing_interceptions": "interceptions_thrown",
     },
+    # MLS (soccer) player props — SGO statID -> player_game_stats.stat_type
+    # (values match ingestion/soccer_backfill.extract_soccer_player_stats).
+    "mls": {
+        "shots": "shots",
+        "shots_onGoal": "shots_on_goal",
+        "tackles": "tackles",
+    },
 }
 
 
@@ -87,6 +94,12 @@ GAME_MARKETS = {
         "full_game_total":     ("points", "all", "game"),
         "full_game_spread":    ("points", "all", "game"),
         "full_game_moneyline": ("points", "all", "game"),
+    },
+    # MLS match total goals — reuses full_game_total (statID points / ou / game)
+    # so geometry + total-scoring settlement need no new plumbing. Skip ml3way
+    # (3-way, doesn't fit two-sided geometry), spread, 2-way ml for v1.
+    "mls": {
+        "full_game_total": ("points", "all", "game"),
     },
 }
 

@@ -67,11 +67,11 @@ def settle_moneyline_leg(side, home_pts, away_pts):
     return "won" if side == winner else "lost"
 
 
-# Final game statuses. MLB/NFL only ever emit "FT" for a played game; NBA
-# (API-Sports basketball) marks an over-time final as "AOT" (after over-time),
-# which is equally final and MUST settle — otherwise every NBA overtime game
-# strands pending forever (caught in NBA build verification 2026-07-30).
-_FINAL_GAME_STATUSES = {"FT", "AOT"}
+# Final game statuses. MLB/NFL emit only "FT"; NBA adds "AOT" (after over-time);
+# MLS (soccer) adds "AET" (after extra time) and "PEN" (penalty shootout). All
+# are final and MUST settle. Non-soccer sports never emit AET/PEN, so this is
+# additive for them.
+_FINAL_GAME_STATUSES = {"FT", "AOT", "AET", "PEN"}
 
 
 def leg_status(game_status, actual):
