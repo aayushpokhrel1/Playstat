@@ -52,6 +52,15 @@ SPORTS = {
         "odds_league_id": "MLS",
         "id_offset": 300_000_000,
     },
+    # UEFA Champions League (soccer) — SAME API-Sports FOOTBALL host/key as MLS,
+    # league 2 (LIVE-VERIFIED 2026-08-05: 279 fixtures/2024, FT/AET/PEN). Free tier:
+    # seasons 2022-2024 only (current is paid). Ingested by soccer_backfill --sport ucl.
+    "ucl": {
+        "base_url": "https://v3.football.api-sports.io",
+        "league_id": 2,
+        "odds_league_id": "UEFA_CHAMPIONS_LEAGUE",
+        "id_offset": 400_000_000,
+    },
 }
 
 NBA_LEAGUE_ID = SPORTS["nba"]["league_id"]

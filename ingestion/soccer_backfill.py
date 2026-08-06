@@ -1,4 +1,4 @@
-"""Ingest MLS (soccer) data from API-Sports FOOTBALL (v3.football.api-sports.io)
+"""Ingest MLS/UCL (soccer) data from API-Sports FOOTBALL (v3.football.api-sports.io)
 into the shared multi-sport schema. Different endpoints/shape than the basketball
 backfill (ingestion/backfill.py): /fixtures + /fixtures/players, nested statistics,
 goals.home/away for scores. Free tier = seasons 2022-2024 only (current is paid).
@@ -48,18 +48,18 @@ def extract_soccer_player_stats(stat_block):
     return {k: v for k, v in out.items() if v is not None}
 
 
-def backfill_teams_and_games(conn, fixtures, offset):
+def backfill_teams_and_games(conn, fixtures, offset, sport="mls"):
     """Upsert teams (from fixture home/away) + games; write scores for finals."""
     for fx in fixtures:
         f = fx["fixture"]; teams = fx["teams"]
         for side in ("home", "away"):
             t = teams[side]
             db.upsert(conn, "teams", ["team_id"],
-                      {"team_id": t["id"] + offset, "sport": SPORT, "name": t["name"]})
+                      {"team_id": t["id"] + offset, "sport": sport, "name": t["name"]})
         game_id = f["id"] + offset
         status = (f.get("status") or {}).get("short")
         db.upsert(conn, "games", ["game_id"], {
-            "game_id": game_id, "sport": SPORT, "date": f["date"][:10],
+            "game_id": game_id, "sport": sport, "date": f["date"][:10],
             "home_team_id": teams["home"]["id"] + offset,
             "away_team_id": teams["away"]["id"] + offset,
             "status": status,
@@ -71,18 +71,18 @@ def backfill_teams_and_games(conn, fixtures, offset):
                 db.upsert(conn, "team_game_stats", ["team_id", "game_id", "stat_type"], pr)
 
 
-def backfill_fixtures(client, engine, season):
-    offset = SPORTS[SPORT]["id_offset"]
-    fixtures = client.get("/fixtures", params={"league": SPORTS[SPORT]["league_id"], "season": season})
+def backfill_fixtures(client, engine, season, sport="mls"):
+    offset = SPORTS[sport]["id_offset"]
+    fixtures = client.get("/fixtures", params={"league": SPORTS[sport]["league_id"], "season": season})
     with engine.begin() as conn:
-        backfill_teams_and_games(conn, fixtures, offset)
+        backfill_teams_and_games(conn, fixtures, offset, sport)
     finished = [fx for fx in fixtures if is_soccer_final((fx["fixture"].get("status") or {}).get("short"))]
     print(f"fixtures {season}: upserted {len(fixtures)} ({len(finished)} finished)")
     return finished
 
 
-def backfill_player_stats(client, engine, finished_fixtures):
-    offset = SPORTS[SPORT]["id_offset"]
+def backfill_player_stats(client, engine, finished_fixtures, sport="mls"):
+    offset = SPORTS[sport]["id_offset"]
     with engine.begin() as conn:
         already = db.game_ids_with_stats(conn)
     remaining = [fx for fx in finished_fixtures if fx["fixture"]["id"] + offset not in already]
@@ -97,7 +97,7 @@ def backfill_player_stats(client, engine, finished_fixtures):
                 for p in team_block.get("players", []):
                     pid = p["player"]["id"] + offset
                     db.upsert(conn, "players", ["player_id"], {
-                        "player_id": pid, "sport": SPORT, "name": p["player"]["name"],
+                        "player_id": pid, "sport": sport, "name": p["player"]["name"],
                         "team_id": team_id, "position": None,
                     })
                     stats = (p.get("statistics") or [{}])[0]
@@ -113,17 +113,18 @@ def backfill_player_stats(client, engine, finished_fixtures):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--sport", choices=["mls", "ucl"], default=SPORT)
     parser.add_argument("--season", default="all")
     parser.add_argument("--only", choices=["fixtures", "stats", "all"], default="all")
     args = parser.parse_args()
     seasons = SEASONS if args.season == "all" else [int(args.season)]
-    client = APISportsClient(SPORT)
+    client = APISportsClient(args.sport)
     engine = db.get_engine()
     try:
         for season in seasons:
-            finished = backfill_fixtures(client, engine, season)
+            finished = backfill_fixtures(client, engine, season, args.sport)
             if args.only in ("stats", "all"):
-                backfill_player_stats(client, engine, finished)
+                backfill_player_stats(client, engine, finished, args.sport)
     except QuotaExhaustedError as e:
         print(f"Stopping: {e}\nRe-run later to resume — loaded games are skipped.")
 
