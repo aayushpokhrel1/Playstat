@@ -2,7 +2,7 @@ import json
 import os
 from datetime import date as date_type
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
@@ -50,6 +50,25 @@ app.add_middleware(
 )
 
 engine = get_engine()
+
+
+# --- Deprecation of the frozen model-serving endpoints (README §16 / §7.1) ---
+# /edges, /game-predictions, /parlay-recommendations served model rows frozen
+# since the 2026-07-29 model shelving (§16) and have no live consumer — Budgerr
+# migrated its /edges quick-entry prefill + Tonight edge/NRFI chips onto
+# /parlay-builder/saved and acked (confirmed 2026-08-06). Phased wind-down:
+# these three now return [] with RFC 8594 / RFC 9745 deprecation headers, and
+# the routes are removed in the following commit (Sunset date below is the
+# formal record; removal follows immediately since Budgerr already migrated).
+_DEPRECATION_SUNSET = "Wed, 20 Aug 2026 00:00:00 GMT"
+
+
+def _mark_deprecated(response: Response) -> None:
+    """Stamp deprecation headers pointing consumers at the forward source
+    (/parlay-builder/saved). Called by the three shelved model endpoints."""
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = _DEPRECATION_SUNSET
+    response.headers["Link"] = '</parlay-builder/saved>; rel="successor-version"'
 
 
 @app.get("/health")
@@ -254,40 +273,12 @@ def box_scores(date: date_type, sport: str | None = None):
 
 
 @app.get("/edges", response_model=list[EdgeOut])
-def list_edges():
-    """Current positive-edge legs, for external consumers (e.g. Budgerr's bet
-    quick-entry pre-fill) — empty until a sport has both live prop_lines and
-    model predictions (MLB lines are flowing; MLB modeling is the missing half).
-    """
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text(
-                """
-                SELECT e.player_id, p.name, p.team_id, e.game_id, g.date, e.stat_type, e.side,
-                       pl.line_value,
-                       CASE e.side WHEN 'over' THEN pl.over_odds ELSE pl.under_odds END AS odds,
-                       e.model_prob, e.edge
-                FROM edges e
-                JOIN players p ON p.player_id = e.player_id
-                JOIN games g ON g.game_id = e.game_id
-                JOIN (
-                    SELECT DISTINCT ON (player_id, game_id, stat_type)
-                        player_id, game_id, stat_type, line_value, over_odds, under_odds
-                    FROM prop_lines
-                    ORDER BY player_id, game_id, stat_type, pulled_at DESC
-                ) pl ON pl.player_id = e.player_id AND pl.game_id = e.game_id AND pl.stat_type = e.stat_type
-                WHERE e.edge > 0
-                ORDER BY e.edge DESC
-                """
-            )
-        ).fetchall()
-    return [
-        EdgeOut(
-            player_id=r[0], player_name=r[1], team_id=r[2], game_id=r[3], date=str(r[4]),
-            stat_type=r[5], side=r[6], line_value=r[7], odds=r[8], model_prob=r[9], edge=r[10],
-        )
-        for r in rows
-    ]
+def list_edges(response: Response):
+    """DEPRECATED (README §16, Sunset 2026-08-20) — the model is shelved and
+    this served rows frozen since 2026-07-29. Now returns []. Forward source
+    for consumers: /parlay-builder/saved."""
+    _mark_deprecated(response)
+    return []
 
 
 @app.get("/edge-distributions", response_model=list[EdgeDistributionOut])
@@ -363,47 +354,13 @@ def edge_distributions():
 
 
 @app.get("/game-predictions", response_model=list[GamePredictionOut])
-def game_predictions(date: date_type | None = None, sport: str | None = None):
-    """Game-level model outputs (e.g. first-inning total runs vs the 1.5 line),
-    with the latest ingested book line for the same market when one exists.
-    """
-    query = """
-        SELECT gp.game_id, g.date, g.sport, ht.name, at.name, gp.market, gp.line_value,
-               gp.predicted_mean, gp.prob_under, gp.prob_over, gp.model_version,
-               gl.line_value, gl.over_odds, gl.under_odds
-        FROM game_predictions gp
-        JOIN games g ON g.game_id = gp.game_id
-        JOIN teams ht ON ht.team_id = g.home_team_id
-        JOIN teams at ON at.team_id = g.away_team_id
-        LEFT JOIN LATERAL (
-            SELECT line_value, over_odds, under_odds
-            FROM game_lines
-            WHERE game_id = gp.game_id AND market = gp.market
-            ORDER BY pulled_at DESC
-            LIMIT 1
-        ) gl ON true
-        WHERE true
-    """
-    params = {}
-    if date is not None:
-        query += " AND g.date = :date"
-        params["date"] = date
-    if sport is not None:
-        query += " AND g.sport = :sport"
-        params["sport"] = sport
-    query += " ORDER BY g.date, gp.game_id"
-
-    with engine.begin() as conn:
-        rows = conn.execute(text(query), params).fetchall()
-    return [
-        GamePredictionOut(
-            game_id=r[0], date=str(r[1]), sport=r[2], home_team=r[3], away_team=r[4],
-            market=r[5], line_value=r[6], predicted_mean=r[7], prob_under=r[8],
-            prob_over=r[9], model_version=r[10],
-            book_line_value=r[11], book_over_odds=r[12], book_under_odds=r[13],
-        )
-        for r in rows
-    ]
+def game_predictions(response: Response, date: date_type | None = None, sport: str | None = None):
+    """DEPRECATED (README §16, Sunset 2026-08-20) — game-level model outputs,
+    frozen since the 2026-07-29 shelving. Now returns []. The date/sport query
+    params are retained so any lingering caller's URL still parses. Forward
+    source: /parlay-builder/saved."""
+    _mark_deprecated(response)
+    return []
 
 
 def _as_legs_list(raw):
@@ -505,62 +462,13 @@ def _load_builder_team_context(engine, game_ids, player_ids):
 
 
 @app.get("/parlay-recommendations", response_model=list[ParlayRecommendationOut])
-def list_parlay_recommendations(limit: int = 10):
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text(
-                """
-                SELECT parlay_id, created_at, target_payout, joint_prob, combined_odds, legs
-                FROM parlay_recommendations
-                -- External-contract surface (Budgerr, README §7.1/§15.6) —
-                -- additive-only. This endpoint's response schema (ParlayLeg)
-                -- models only the pre-builder player/team leg shape, and
-                -- builder constructions (kind='builder') mix player+team legs
-                -- in one parlay and have their own endpoint/schema
-                -- (/parlay-builder, BuilderParlayOut). Do NOT remove this
-                -- filter to "let builder rows through here too" — it will
-                -- 500 the moment a builder row enters the LIMIT window
-                -- (README §15.10 bug #5, hit live 2026-07-21).
-                WHERE kind IN ('player', 'team')
-                ORDER BY created_at DESC, joint_prob DESC
-                LIMIT :limit
-                """
-            ),
-            {"limit": limit},
-        ).fetchall()
-
-    parlays = [(r, _as_legs_list(r[5])) for r in rows]
-
-    # Legs are stored with player_id only for the (live) player kind; resolve
-    # names in one query so consumers (Budgerr's Tonight view) can render
-    # them directly. The dormant team-kind shape carries no player_id at all
-    # — tolerate that rather than raising a KeyError.
-    player_ids = {
-        leg["player_id"] for _, legs_raw in parlays for leg in legs_raw if "player_id" in leg
-    }
-    names = {}
-    if player_ids:
-        with engine.begin() as conn:
-            names = dict(
-                conn.execute(
-                    text("SELECT player_id, name FROM players WHERE player_id = ANY(:ids)"),
-                    {"ids": list(player_ids)},
-                ).fetchall()
-            )
-
-    results = []
-    for r, legs_raw in parlays:
-        results.append(
-            ParlayRecommendationOut(
-                parlay_id=r[0],
-                created_at=str(r[1]),
-                target_payout=r[2],
-                joint_prob=r[3],
-                combined_odds=r[4],
-                legs=[ParlayLeg(**leg, player_name=names.get(leg.get("player_id"))) for leg in legs_raw],
-            )
-        )
-    return results
+def list_parlay_recommendations(response: Response, limit: int = 10):
+    """DEPRECATED (README §16, Sunset 2026-08-20) — the model-ranked parlay
+    leads, frozen since the 2026-07-29 shelving. Now returns []. The `limit`
+    query param is retained for URL compatibility. Forward source:
+    /parlay-builder/saved (?tier=all)."""
+    _mark_deprecated(response)
+    return []
 
 
 @app.get("/parlay-builder", response_model=BuilderSearchOut)
