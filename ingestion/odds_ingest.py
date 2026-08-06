@@ -60,6 +60,12 @@ STAT_MAPS = {
         "shots_onGoal": "shots_on_goal",
         "tackles": "tackles",
     },
+    # UCL (soccer) — SAME SGO soccer statIDs as MLS (shared soccer feed).
+    "ucl": {
+        "shots": "shots",
+        "shots_onGoal": "shots_on_goal",
+        "tackles": "tackles",
+    },
 }
 
 
@@ -99,6 +105,10 @@ GAME_MARKETS = {
     # so geometry + total-scoring settlement need no new plumbing. Skip ml3way
     # (3-way, doesn't fit two-sided geometry), spread, 2-way ml for v1.
     "mls": {
+        "full_game_total": ("points", "all", "game"),
+    },
+    # UCL match total goals — reuses full_game_total (points/ou/game), like MLS.
+    "ucl": {
         "full_game_total": ("points", "all", "game"),
     },
 }

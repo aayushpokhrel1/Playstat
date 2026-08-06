@@ -37,3 +37,19 @@ def test_soccer_backfill_sport_ucl_uses_offset_and_sport(monkeypatch):
     team_row = next(r for t, r in calls if t == "teams")
     assert game_row["sport"] == "ucl" and game_row["game_id"] == 7 + 400_000_000
     assert team_row["sport"] == "ucl" and team_row["team_id"] == 11 + 400_000_000
+
+
+def test_ucl_stat_and_game_markets():
+    from ingestion.odds_ingest import STAT_MAPS, GAME_MARKETS
+    # UCL reuses the same soccer statIDs as MLS (same SGO soccer feed).
+    assert STAT_MAPS["ucl"] == {
+        "shots": "shots", "shots_onGoal": "shots_on_goal", "tackles": "tackles",
+    }
+    assert GAME_MARKETS["ucl"] == {"full_game_total": ("points", "all", "game")}
+
+
+def test_ucl_builder_wiring():
+    from optimizer.builder import TEAM_MARKETS, SLATE_WINDOW_DAYS, _team_class
+    assert TEAM_MARKETS["ucl"] == ("full_game_total",)
+    assert SLATE_WINDOW_DAYS["ucl"] == 0
+    assert _team_class("ucl") == "game_tier"
