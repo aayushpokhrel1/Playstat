@@ -26,6 +26,7 @@ import time
 from datetime import date as _date
 
 import requests
+from sqlalchemy import text
 
 from ingestion import db
 from ingestion.config import SPORTS
@@ -344,12 +345,64 @@ def backfill_player_stats(client, engine, finished_games):
     print(f"player_game_stats: loaded box scores for {loaded} games this run ({stat_rows} stat rows)")
 
 
+def player_full_name(landing):
+    """firstName.default + ' ' + lastName.default from /player/{id}/landing —
+    the full name the boxscore only abbreviates ('Zach Benson' vs 'Z. Benson').
+    None if the payload carries no names."""
+    first = (landing.get("firstName") or {}).get("default")
+    last = (landing.get("lastName") or {}).get("default")
+    if first and last:
+        return f"{first} {last}"
+    return None
+
+
+# A stored name is still abbreviated iff it starts with a single initial + dot
+# ("Z. Benson"). Full names ("Zach Benson", "J.T. Miller") don't match, so this
+# both selects rows to enrich AND makes the pass resumable/idempotent.
+_ABBREV_NAME_RE = r"^[A-Z]\. "
+
+
+def backfill_player_names(client, engine):
+    """Enrich abbreviated boxscore names ('Z. Benson') to full names ('Zach
+    Benson') via /player/{id}/landing, so SGO player-prop name-matching resolves
+    when props open at preseason. UPDATE-in-place on players.name keyed on
+    player_id — no box-score re-backfill. Resumable/idempotent: only players
+    whose stored name is still abbreviated are fetched, so a re-run is a no-op.
+    """
+    with engine.begin() as conn:
+        player_ids = [r[0] for r in conn.execute(
+            text("SELECT player_id FROM players WHERE sport='nhl' AND name ~ :re"),
+            {"re": _ABBREV_NAME_RE},
+        ).fetchall()]
+
+    print(f"player names: {len(player_ids)} abbreviated names to enrich")
+    updated = 0
+    for pid in player_ids:
+        raw = pid - NHL_ID_OFFSET
+        try:
+            landing = client.get(f"/player/{raw}/landing")
+        except requests.exceptions.HTTPError:
+            continue  # no landing for this player id — keep the abbreviated name
+        full = player_full_name(landing)
+        if not full:
+            continue
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE players SET name = :n WHERE player_id = :pid"),
+                {"n": full, "pid": pid},
+            )
+        updated += 1
+        if updated % 200 == 0:
+            print(f"  ...{updated}/{len(player_ids)} enriched")
+    print(f"player names: enriched {updated} players")
+
+
 def main():
     parser = argparse.ArgumentParser()
     # Teams, games and final scores share the single score-feed walk
     # (backfill_games upserts teams from each game's team blocks), so
     # --only teams and --only games both run that walk.
-    parser.add_argument("--only", choices=["teams", "games", "stats", "all"], default="all")
+    parser.add_argument("--only", choices=["teams", "games", "stats", "names", "all"], default="all")
     parser.add_argument("--season", type=int, default=current_nhl_season(), help="season start year, e.g. 2025")
     args = parser.parse_args()
 
@@ -362,6 +415,11 @@ def main():
 
     if args.only in ("stats", "all"):
         backfill_player_stats(client, engine, finished_games)
+
+    # Full-name enrichment (players.name UPDATE) — resumable, independent of the
+    # score/box-score walk, so `--only names` runs it standalone; `all` appends it.
+    if args.only in ("names", "all"):
+        backfill_player_names(client, engine)
 
 
 if __name__ == "__main__":

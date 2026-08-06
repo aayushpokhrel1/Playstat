@@ -5,7 +5,7 @@ backfill's DB/network paths are covered by the architect's live smoke (Task 5)."
 from ingestion.nhl_backfill import (
     extract_goalie_stats, extract_skater_stats, final_status, nhl_game_id,
     nhl_player_id, nhl_raw_game_id, nhl_team_id, parse_team_names,
-    resolve_team_name,
+    player_full_name, resolve_team_name,
 )
 
 
@@ -72,6 +72,14 @@ def test_parse_team_names():
     ]}
     names = parse_team_names(payload)
     assert names == {"NYR": "New York Rangers", "MTL": "Montréal Canadiens", "STL": "St. Louis Blues"}
+
+
+def test_player_full_name():
+    # /player/{id}/landing firstName.default + lastName.default -> full name.
+    assert player_full_name({"firstName": {"default": "Zach"}, "lastName": {"default": "Benson"}}) == "Zach Benson"
+    # Accents preserved; missing names -> None (keep the abbreviated boxscore name).
+    assert player_full_name({"firstName": {"default": "Tim"}, "lastName": {"default": "Stützle"}}) == "Tim Stützle"
+    assert player_full_name({}) is None
 
 
 def test_resolve_team_name():
