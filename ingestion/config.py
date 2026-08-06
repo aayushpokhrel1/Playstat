@@ -66,6 +66,19 @@ SPORTS = {
         "odds_league_id": "UEFA_CHAMPIONS_LEAGUE",
         "id_offset": 500_000_000,
     },
+    # NHL (hockey) — NHL's OWN free public API (api-web.nhle.com, key-less), NOT
+    # API-Sports: their hockey API's current season is paid, NHL's own is free +
+    # current (the MLB StatsAPI pattern). Odds via SGO free tier (odds_league_id
+    # "NHL"). Ingested by ingestion/nhl_backfill.py.
+    # id_offset is +1B, NOT the next +100M band: NHL native game ids are ~2.03e9
+    # (season*1e6+...), already above every band and fitting INT4 (2.147e9) with no
+    # room for a positive offset. nhl_backfill stores game_id = 1e9 + (raw - 2e9)
+    # (see NHL_GAME_ID_EPOCH there); teams/players are 1e9 + raw. 1B clears NFL's
+    # real 400-420M span + UCL 500M and stays under INT4. See README §11 / §16.4.
+    "nhl": {
+        "odds_league_id": "NHL",
+        "id_offset": 1_000_000_000,
+    },
 }
 
 NBA_LEAGUE_ID = SPORTS["nba"]["league_id"]
