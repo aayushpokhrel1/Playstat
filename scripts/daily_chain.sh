@@ -153,6 +153,19 @@ run_chain() {
 			_step ucl_game_1.4    "$PY" -m optimizer.builder --sport ucl --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step ucl_game_2.0    "$PY" -m optimizer.builder --sport ucl --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
 	}
+	# NHL (hockey) — DAILY like NBA. Player (shots-on-goal/saves) + match-total
+	# game tier. Best-effort: an NHL failure logs but never aborts the MLB chain.
+	# LIVE-FOR-FREE (NHL's own free API + free SGO odds) — unlike NBA/MLS/UCL this
+	# needs NO paid plan: it does real work the moment the season opens (~Oct) and
+	# is harmlessly inert (0 games -> 0 legs) in the offseason. nhl_scores below
+	# defaults --season to the live season (current_nhl_season()).
+	_nhl_daily_build() {
+		_step_retry nhl_odds  "$PY" -m ingestion.odds_ingest --sport nhl &&
+			_step nhl_builder_1.4 "$PY" -m optimizer.builder --sport nhl --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nhl_builder_2.0 "$PY" -m optimizer.builder --sport nhl --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nhl_game_1.4    "$PY" -m optimizer.builder --sport nhl --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+			_step nhl_game_2.0    "$PY" -m optimizer.builder --sport nhl --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
+	}
 	_step_retry stats       "$PY" -m ingestion.mlb_backfill --only stats &&
 		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
 		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
@@ -170,6 +183,8 @@ run_chain() {
 		{ _step_retry mls_scores "$PY" -m ingestion.soccer_backfill --season 2024 --only fixtures || echo "=== mls_scores: FAILED (non-fatal) ==="; } &&
 		{ _ucl_daily_build || echo "=== ucl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry ucl_scores "$PY" -m ingestion.soccer_backfill --sport ucl --season 2024 --only fixtures || echo "=== ucl_scores: FAILED (non-fatal) ==="; } &&
+		{ _nhl_daily_build || echo "=== nhl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
+		{ _step_retry nhl_scores "$PY" -m ingestion.nhl_backfill --only games || echo "=== nhl_scores: FAILED (non-fatal) ==="; } &&
 		_step settle           "$PY" -m modeling.settle
 	# MODEL PIPELINE SHELVED 2026-07-29 (README §16, user-approved 2026-07-28,
 	# Budgerr-coordinated + acked). The four model steps below ran here and are
