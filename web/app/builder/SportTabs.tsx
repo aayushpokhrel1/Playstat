@@ -7,6 +7,7 @@ const SPORTS: { key: string; label: string }[] = [
   { key: "nba", label: "NBA" },
   { key: "mls", label: "MLS" },
   { key: "ucl", label: "UCL" },
+  { key: "nhl", label: "NHL" },
 ];
 
 export default function SportTabs({ active }: { active: string }) {

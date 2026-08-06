@@ -19,7 +19,11 @@ export async function GET(request: NextRequest) {
   const min_prob = numberParam(searchParams, "min_prob");
   const max_legs = numberParam(searchParams, "max_legs");
   const sportRaw = searchParams.get("sport");
-  const sport = sportRaw === "nfl" || sportRaw === "nba" ? sportRaw : "mlb";
+  // Whitelist every built sport (was nfl/nba only — a latent bug that made the
+  // live Build button on the MLS/UCL/NHL tabs fall back to MLB parlays). Default
+  // stays "mlb" (Budgerr-safe — Budgerr reads /parlay-builder/saved, not this).
+  const sport =
+    sportRaw && ["nfl", "nba", "mls", "ucl", "nhl"].includes(sportRaw) ? sportRaw : "mlb";
 
   if (target_payout == null && min_prob == null) {
     return NextResponse.json(
