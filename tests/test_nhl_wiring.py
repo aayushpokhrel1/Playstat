@@ -66,3 +66,28 @@ def test_team_name_from_feed():
     assert team_full_name("New York", "Rangers") == "New York Rangers"
     assert team_full_name("St. Louis", "Blues") == "St. Louis Blues"
     assert team_full_name("Montréal", "Canadiens") == "Montréal Canadiens"
+
+
+def test_nhl_maps_present():
+    """NHL is registered in every per-sport map the builder + odds paths read."""
+    from ingestion.odds_ingest import GAME_MARKETS, STAT_MAPS
+    from optimizer.builder import SLATE_WINDOW_DAYS, TEAM_MARKETS, _team_class
+
+    assert STAT_MAPS["nhl"] == {"shots_onGoal": "shots_on_goal", "saves": "saves"}
+    assert GAME_MARKETS["nhl"] == {"full_game_total": ("points", "all", "game")}
+    assert TEAM_MARKETS["nhl"] == ("full_game_total",)
+    assert SLATE_WINDOW_DAYS["nhl"] == 0
+    assert _team_class("nhl") == "game_tier"
+
+
+def test_nhl_stat_map_targets_are_backfill_stats():
+    """Every STAT_MAPS['nhl'] target must be a stat_type nhl_backfill actually
+    emits, or the prop would ingest a line that can never settle (no actual)."""
+    from ingestion.odds_ingest import STAT_MAPS
+
+    emitted = set(extract_skater_stats(
+        {"sog": 1, "goals": 0, "assists": 0, "points": 0, "hits": 0, "blockedShots": 0, "pim": 0}
+    )) | set(extract_goalie_stats(
+        {"saves": 1, "shotsAgainst": 1, "goalsAgainst": 0, "toi": "10:00"}
+    ))
+    assert set(STAT_MAPS["nhl"].values()) <= emitted

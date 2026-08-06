@@ -66,6 +66,15 @@ STAT_MAPS = {
         "shots_onGoal": "shots_on_goal",
         "tackles": "tackles",
     },
+    # NHL (hockey) player props — SGO statID -> player_game_stats.stat_type
+    # (values match ingestion/nhl_backfill's box-score extractors). The sog/saves
+    # statID names are the best-known SGO hockey IDs; PRESEASON-VERIFY via
+    # `odds_ingest --sport nhl --dry-run` — the offseason feed carries NO player
+    # props (LIVE-PROBED 2026-08-06), only the game total (GAME_MARKETS below).
+    "nhl": {
+        "shots_onGoal": "shots_on_goal",
+        "saves": "saves",
+    },
 }
 
 
@@ -109,6 +118,12 @@ GAME_MARKETS = {
     },
     # UCL match total goals — reuses full_game_total (points/ou/game), like MLS.
     "ucl": {
+        "full_game_total": ("points", "all", "game"),
+    },
+    # NHL match total goals — reuses full_game_total (points/all/game).
+    # LIVE-CONFIRMED 2026-08-06: ('points','ou','game') priced on the free NHL
+    # feed. Skip ml3way (3-way — regulation ties), 1p total, bothTeamsScored.
+    "nhl": {
         "full_game_total": ("points", "all", "game"),
     },
 }
