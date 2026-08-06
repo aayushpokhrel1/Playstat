@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getPlayer, getPlayerPredictions, getPlayerStats } from "../../lib/api";
+import { getPlayer, getPlayerStats } from "../../lib/api";
 
 export default async function PlayerPage({
   params,
@@ -18,17 +18,7 @@ export default async function PlayerPage({
     notFound();
   }
 
-  const [stats, predictions] = await Promise.all([
-    getPlayerStats(playerId),
-    getPlayerPredictions(playerId),
-  ]);
-
-  const predictionsByStat = new Map<string, typeof predictions>();
-  for (const p of predictions) {
-    const list = predictionsByStat.get(p.stat_type) ?? [];
-    list.push(p);
-    predictionsByStat.set(p.stat_type, list);
-  }
+  const stats = await getPlayerStats(playerId);
 
   return (
     <main style={{ padding: "2rem", maxWidth: 900, margin: "0 auto" }}>
@@ -61,34 +51,6 @@ export default async function PlayerPage({
           </tbody>
         </table>
       </section>
-
-      {[...predictionsByStat.entries()].map(([statType, preds]) => (
-        <section key={statType} style={{ marginTop: "1.5rem" }}>
-          <h2 style={{ fontSize: "1.1rem", textTransform: "capitalize" }}>
-            {statType} — predicted vs actual
-          </h2>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>
-                <th>Date</th>
-                <th>Predicted</th>
-                <th>Actual</th>
-              </tr>
-            </thead>
-            <tbody>
-              {preds.map((p) => (
-                <tr key={p.game_id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td>{p.date}</td>
-                  <td>
-                    {p.predicted_mean.toFixed(1)} &plusmn; {p.predicted_std.toFixed(1)}
-                  </td>
-                  <td>{p.actual ?? "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ))}
     </main>
   );
 }

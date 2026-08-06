@@ -21,16 +21,6 @@ export type GameLogEntry = {
   minutes: number | null;
 };
 
-export type Prediction = {
-  game_id: number;
-  date: string;
-  stat_type: string;
-  predicted_mean: number;
-  predicted_std: number;
-  model_version: string;
-  actual: number | null;
-};
-
 export type BuilderLeg = {
   game_id: number;
   kind: "player" | "team";
@@ -135,10 +125,6 @@ export async function getPlayer(playerId: number): Promise<Player | null> {
 
 export function getPlayerStats(playerId: number) {
   return apiGet<GameLogEntry[]>(`/players/${playerId}/stats`);
-}
-
-export function getPlayerPredictions(playerId: number) {
-  return apiGet<Prediction[]>(`/players/${playerId}/predictions`);
 }
 
 // Dashboard-only builder record split by tier + target payout (README §15).

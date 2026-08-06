@@ -8,7 +8,6 @@ from sqlalchemy import text
 
 from api.auth import require_api_key
 from api.schemas import (
-    BacktestRunOut,
     BetPerformanceOut,
     BoxScoreOut,
     BuilderLegOut,
@@ -16,21 +15,14 @@ from api.schemas import (
     BuilderRecordDailyOut,
     BuilderRecordOut,
     BuilderSearchOut,
-    ClvSummaryOut,
-    EdgeDistributionOut,
     GameLogEntry,
     GameOut,
-    ModelPerformanceOut,
     PlayerOut,
-    PmfPoint,
-    PredictionOut,
     SavedBuilderParlayOut,
     TeamOut,
 )
 from ingestion.db import get_engine
 from modeling import settle
-from modeling.distributions import pmf_list, prob_over
-from modeling.train import model_version, stat_family
 from optimizer import builder, builder_core
 
 app = FastAPI(title="Playstat API", dependencies=[Depends(require_api_key)])
@@ -127,53 +119,6 @@ def player_stats(player_id: int, limit: int = 20):
     ]
 
 
-@app.get("/players/{player_id}/predictions", response_model=list[PredictionOut])
-def player_predictions(player_id: int, stat: str | None = None):
-    query = """
-        SELECT mp.game_id, g.date, mp.stat_type, mp.predicted_mean, mp.predicted_std, mp.model_version,
-               pgs.value::int as actual
-        FROM model_predictions mp
-        JOIN games g ON g.game_id = mp.game_id
-        LEFT JOIN player_game_stats pgs
-          ON pgs.player_id = mp.player_id AND pgs.game_id = mp.game_id AND pgs.stat_type = mp.stat_type
-        WHERE mp.player_id = :player_id
-    """
-    params = {"player_id": player_id}
-    if stat is not None:
-        query += " AND mp.stat_type = :stat"
-        params["stat"] = stat
-    query += " ORDER BY g.date DESC"
-
-    with engine.begin() as conn:
-        rows = conn.execute(text(query), params).fetchall()
-    return [
-        PredictionOut(
-            game_id=r[0], date=str(r[1]), stat_type=r[2],
-            predicted_mean=r[3], predicted_std=r[4], model_version=r[5], actual=r[6],
-        )
-        for r in rows
-    ]
-
-
-@app.get("/model-performance", response_model=list[ModelPerformanceOut])
-def model_performance():
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text(
-                """
-                SELECT mp.stat_type,
-                       AVG(ABS(mp.predicted_mean - pgs.value)) as mae,
-                       COUNT(*) as n
-                FROM model_predictions mp
-                JOIN player_game_stats pgs
-                  ON pgs.player_id = mp.player_id AND pgs.game_id = mp.game_id AND pgs.stat_type = mp.stat_type
-                GROUP BY mp.stat_type
-                """
-            )
-        ).fetchall()
-    return [ModelPerformanceOut(stat_type=r[0], mae=float(r[1]), n=r[2]) for r in rows]
-
-
 @app.get("/games", response_model=list[GameOut])
 def list_games(date: date_type, sport: str | None = None):
     """Tonight's (or any date's) slate — full schedule, not just legs with a
@@ -249,88 +194,13 @@ def box_scores(date: date_type, sport: str | None = None):
     return results
 
 
-@app.get("/edge-distributions", response_model=list[EdgeDistributionOut])
-def edge_distributions():
-    """Full predictive PMF behind every current positive edge (README §14.5) —
-    lets the dashboard draw the whole distribution behind a "model prob 82%"
-    figure, not just that single number. Same edge set and same `prop_lines`
-    latest-pull join as /edges (mirrored exactly, including the DISTINCT ON
-    subquery); additionally joins model_predictions for (predicted_mean,
-    predicted_std) so modeling/distributions.py can reconstruct the law.
-    Read-only, additive — does not touch /edges or its response shape.
-
-    model_predictions' primary key includes model_version (old versions are
-    never deleted), so a stat can have more than one row per (player, game,
-    stat) key; we join without pinning the version in SQL and instead filter
-    in Python against modeling.train.model_version(stat), mirroring exactly
-    how modeling/edges.py's compute_edges matches predictions to the live
-    model per stat.
-    """
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text(
-                """
-                SELECT e.player_id, e.game_id, e.stat_type, e.side,
-                       pl.line_value, mp.predicted_mean, mp.predicted_std, mp.model_version
-                FROM edges e
-                JOIN (
-                    SELECT DISTINCT ON (player_id, game_id, stat_type)
-                        player_id, game_id, stat_type, line_value, over_odds, under_odds
-                    FROM prop_lines
-                    ORDER BY player_id, game_id, stat_type, pulled_at DESC
-                ) pl ON pl.player_id = e.player_id AND pl.game_id = e.game_id AND pl.stat_type = e.stat_type
-                JOIN model_predictions mp
-                  ON mp.player_id = e.player_id AND mp.game_id = e.game_id AND mp.stat_type = e.stat_type
-                WHERE e.edge > 0
-                """
-            )
-        ).fetchall()
-
-    results = []
-    for r in rows:
-        player_id, game_id, stat_type, side, line_value, predicted_mean, predicted_std, row_model_version = r
-        if row_model_version != model_version(stat_type):
-            continue  # a stale/retired model_version row for this stat — not the live prediction
-
-        family = stat_family(stat_type)
-        predicted_mean = float(predicted_mean)
-        predicted_std = float(predicted_std)
-        line_value = float(line_value)
-
-        prob_over_val = prob_over(predicted_mean, predicted_std, line_value, family)
-        prob_under_val = 1.0 - prob_over_val
-
-        pmf = None
-        if family == "discrete":
-            pmf = [PmfPoint(k=k, prob=p) for k, p in pmf_list(predicted_mean, predicted_std)]
-
-        results.append(
-            EdgeDistributionOut(
-                player_id=player_id,
-                game_id=game_id,
-                stat_type=stat_type,
-                side=side,
-                family=family,
-                line_value=line_value,
-                predicted_mean=predicted_mean,
-                prob_over=prob_over_val,
-                prob_under=prob_under_val,
-                pmf=pmf,
-            )
-        )
-    return results
-
-
 def _as_legs_list(raw):
     """Unwrap a parlay_recommendations.legs JSONB value into a plain list of
-    leg dicts. Same defensive shape as modeling.settle._as_legs_list (README
-    §15.10 bug #4): psycopg2 hands JSONB back already parsed, so the
-    team/builder {"class", "legs": [...]} wrapper arrives as a dict, and
-    json.loads(dict) raises TypeError, not a parse error. This endpoint's
-    `kind` filter (below) keeps builder rows out entirely, but the dormant
-    kind='team' path shares this exact wrapper shape and would hit the
-    identical crash the moment it goes live — fixed defensively here too
-    (README §15.10 bug #5).
+    leg dicts. Used by /parlay-builder/saved. Same defensive shape as
+    modeling.settle._as_legs_list (README §15.10 bug #4): psycopg2 hands JSONB
+    back already parsed, so the builder {"class", "legs": [...]} wrapper
+    arrives as a dict, and json.loads(dict) raises TypeError, not a parse
+    error — handle both the bare-list and dict-wrapper shapes.
     """
     if isinstance(raw, str):
         raw = json.loads(raw)
@@ -701,31 +571,6 @@ def builder_record_daily(sport: str = "mlb"):
     return _shape_builder_record_daily(rows)
 
 
-@app.get("/clv-summary", response_model=list[ClvSummaryOut])
-def clv_summary():
-    """Closing-line value by stat type (multi-snapshot edges only) — the
-    leading indicator of whether flagged edges are real. Positive avg CLV
-    means the market keeps moving toward our positions after we flag them.
-    """
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text(
-                """
-                SELECT stat_type, COUNT(*) AS n, AVG(clv) AS avg_clv,
-                       AVG((clv > 0)::int) AS pct_positive
-                FROM clv_records
-                WHERE n_snapshots > 1
-                GROUP BY stat_type
-                ORDER BY stat_type
-                """
-            )
-        ).fetchall()
-    return [
-        ClvSummaryOut(stat_type=r[0], n=r[1], avg_clv=float(r[2]), pct_positive=float(r[3]))
-        for r in rows
-    ]
-
-
 @app.get("/bet-performance", response_model=list[BetPerformanceOut])
 def bet_performance():
     """Paper-trading ledger aggregate (README §14.1, modeling/settle.py) — the
@@ -765,26 +610,4 @@ def bet_performance():
             roi=(pnl / staked if staked else 0.0),
         )
         for label, n, wins, losses, pushes, staked, pnl in settle.aggregate_bet_performance(rows)
-    ]
-
-
-@app.get("/backtest-history", response_model=list[BacktestRunOut])
-def backtest_history(stat: str | None = None):
-    query = "SELECT run_id, run_at, stat_type, model_version, n_test_games, mae, coverage_16, coverage_84 FROM backtest_runs"
-    params = {}
-    if stat is not None:
-        query += " WHERE stat_type = :stat"
-        params["stat"] = stat
-    query += " ORDER BY run_at DESC"
-
-    with engine.begin() as conn:
-        rows = conn.execute(text(query), params).fetchall()
-    return [
-        BacktestRunOut(
-            run_id=r[0], run_at=str(r[1]), stat_type=r[2], model_version=r[3],
-            n_test_games=r[4], mae=float(r[5]) if r[5] is not None else None,
-            coverage_16=float(r[6]) if r[6] is not None else None,
-            coverage_84=float(r[7]) if r[7] is not None else None,
-        )
-        for r in rows
     ]
