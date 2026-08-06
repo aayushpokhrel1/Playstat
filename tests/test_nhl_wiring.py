@@ -96,7 +96,10 @@ def test_nhl_maps_present():
     from ingestion.odds_ingest import GAME_MARKETS, STAT_MAPS
     from optimizer.builder import SLATE_WINDOW_DAYS, TEAM_MARKETS, _team_class
 
-    assert STAT_MAPS["nhl"] == {"shots_onGoal": "shots_on_goal", "saves": "saves"}
+    assert STAT_MAPS["nhl"] == {
+        "shots_onGoal": "shots_on_goal", "saves": "saves", "goalie_saves": "saves",
+        "points": "points", "assists": "assists", "goals": "goals",
+    }
     assert GAME_MARKETS["nhl"] == {"full_game_total": ("points", "all", "game")}
     assert TEAM_MARKETS["nhl"] == ("full_game_total",)
     assert SLATE_WINDOW_DAYS["nhl"] == 0

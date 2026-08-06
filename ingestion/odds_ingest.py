@@ -67,13 +67,26 @@ STAT_MAPS = {
         "tackles": "tackles",
     },
     # NHL (hockey) player props — SGO statID -> player_game_stats.stat_type
-    # (values match ingestion/nhl_backfill's box-score extractors). The sog/saves
-    # statID names are the best-known SGO hockey IDs; PRESEASON-VERIFY via
-    # `odds_ingest --sport nhl --dry-run` — the offseason feed carries NO player
-    # props (LIVE-PROBED 2026-08-06), only the game total (GAME_MARKETS below).
+    # (values match ingestion/nhl_backfill's box-score extractors, so props settle).
+    # PINNED FROM SGO METADATA 2026-08-06 (the offseason EVENT feed carries no player
+    # props, but SGO's /markets endpoint + docs list the vocabulary regardless):
+    #   - `points`/`assists` are CONFIRMED player statIDs — GET /markets returned
+    #     e.g. `points-PLAYER_ID-game-ou-over`, `assists-PLAYER_ID-...-ou`.
+    #   - `shots_onGoal`/`goals` are from the docs' hockey stat list; `shots_onGoal`
+    #     is the exact token our soccer maps already use (shared SGO spelling).
+    #   - `saves` (docs "Saves") + `goalie_saves` (soccer's token) are BOTH mapped as
+    #     a spelling hedge — whichever hockey uses maps to our `saves`, the other is
+    #     harmlessly absent.
+    # FINAL-CONFIRM spellings via `odds_ingest --sport nhl --dry-run` when props open
+    # (~late Sep); its UNMAPPED-statID report surfaces any miss. Game total is
+    # `full_game_total` in GAME_MARKETS below (LIVE-confirmed, entity 'all').
     "nhl": {
         "shots_onGoal": "shots_on_goal",
         "saves": "saves",
+        "goalie_saves": "saves",
+        "points": "points",
+        "assists": "assists",
+        "goals": "goals",
     },
 }
 
