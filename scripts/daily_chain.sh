@@ -200,7 +200,12 @@ run_chain() {
 		{ _ucl_daily_build || echo "=== ucl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry ucl_scores "$PY" -m ingestion.soccer_backfill --sport ucl --season 2024 --only fixtures || echo "=== ucl_scores: FAILED (non-fatal) ==="; } &&
 		{ _nhl_daily_build || echo "=== nhl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
-		{ _step_retry nhl_scores "$PY" -m ingestion.nhl_backfill --only games || echo "=== nhl_scores: FAILED (non-fatal) ==="; }
+		{ _step_retry nhl_scores "$PY" -m ingestion.nhl_backfill --only games || echo "=== nhl_scores: FAILED (non-fatal) ==="; } &&
+		# Kelly stake sizing (README §15.9 item 4): size the WHOLE date's builder
+		# rows once all sport builds are done, before settle. ¼-Kelly on the
+		# line-shopping edge + a 5u same-night exposure cap; idempotent. NULL stays
+		# on any card built after this (none, in MLB-only) -> settle falls back to 1u.
+		_step stake            "$PY" -m optimizer.stake
 	}
 	core_rc=$?
 	# settle is INDEPENDENT of odds/builders — it reads finished-game stats already in

@@ -68,8 +68,9 @@ export type BuilderRecord = {
   wins: number;
   losses: number;
   pushes: number;
+  staked: number; // sum of ¼-Kelly stakes (README §15.9 item 4)
   pnl: number;
-  roi: number;
+  roi: number; // pnl / staked (stake-weighted)
 };
 
 export type BuilderRecordDaily = {
@@ -78,8 +79,9 @@ export type BuilderRecordDaily = {
   wins: number;
   losses: number;
   pushes: number;
+  staked: number; // sum of ¼-Kelly stakes (README §15.9 item 4)
   pnl: number;
-  roi: number;
+  roi: number; // pnl / staked (stake-weighted)
 };
 
 export type BuilderSearchParams = {

@@ -23,6 +23,12 @@ function formatRoi(value: number): string {
   return `ROI ${sign}${Math.abs(pct).toFixed(1)}%`;
 }
 
+// Sum of ¼-Kelly stakes, always ≥ 0 — plain units, no sign (this is exposure,
+// not P&L). ROI above is pnl/staked, so a low-staked row is a small real bet.
+function formatStaked(value: number): string {
+  return `${value.toFixed(2)}u staked`;
+}
+
 function tierTargetLabel(row: BuilderRecord): string {
   return `${TIER_LABELS[row.tier] ?? row.tier} ${row.target_payout.toFixed(1)}x`;
 }
@@ -60,6 +66,7 @@ export default function RecordPanel({ rows, daily }: RecordPanelProps) {
           <span className={styles.recordFigure}>{formatUnits(row.pnl)}</span>
           <span className={styles.recordFigure}>{formatRoi(row.roi)}</span>
           <span className={styles.recordMeta}>n={row.n}</span>
+          <span className={styles.recordMeta}>{formatStaked(row.staked)}</span>
         </div>
       ))}
       {!hasTeamRows && (
@@ -69,7 +76,11 @@ export default function RecordPanel({ rows, daily }: RecordPanelProps) {
       )}
 
       <div className={styles.recordFooter}>
-        <p className={styles.recordCaption}>Paper trading only — not a real bet.</p>
+        <p className={styles.recordCaption}>
+          Paper trading only — not a real bet. Stakes are ¼-Kelly sized on the
+          shopped price with a nightly exposure cap; a card with no price edge is
+          staked 0, so ROI is per unit staked.
+        </p>
         {hasDaily && (
           <button
             type="button"
@@ -101,6 +112,7 @@ export default function RecordPanel({ rows, daily }: RecordPanelProps) {
                 <span className={styles.recordFigure}>{formatUnits(day.pnl)}</span>
                 <span className={styles.recordFigure}>{formatRoi(day.roi)}</span>
                 <span className={styles.recordMeta}>n={day.n}</span>
+                <span className={styles.recordMeta}>{formatStaked(day.staked)}</span>
               </div>
             ))}
           </div>
