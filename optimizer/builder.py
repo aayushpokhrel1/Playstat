@@ -5,8 +5,10 @@ DE-VIGGED MARKET probability. This is an honest constructor and paper-trading
 sandbox: it makes no claim of edge or positive expected value.
 
 Market-centric on purpose: it de-vigs the raw two-sided odds itself and takes
-the FAVORITE side. It deliberately does not read `edges.side`/`edges.implied_prob`,
-which hold the side the MODEL prefers (possibly an underdog) — see README §15.4.
+the FAVORITE side. It never depended on the model's own preferred side
+(`edges.side`/`edges.implied_prob`, possibly an underdog — README §15.4); the
+`edges`/`game_edges` tables are gone entirely now (model teardown, §16/#3B),
+so `model_prob` is always None.
 """
 
 import argparse
@@ -42,8 +44,13 @@ def _team_class(sport):
 
 
 def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
-    """Latest two-sided player prop lines on TODAY'S slate (unfinished games),
-    + model_prob context.
+    """Latest two-sided player prop lines on TODAY'S slate (unfinished games).
+
+    model_prob is now ALWAYS None: the `edges` table it came from was dropped
+    with the model teardown (README §16 / #3B, 2026-08-06), so the old
+    `LEFT JOIN edges` was removed. normalize_player_leg tolerates its absence
+    (row.get("model_prob") -> None), and model_prob was never used for ranking —
+    the builder ranks purely on de-vigged market probability (§15.4/§15.8).
 
     slate_date restricts candidate games to a `g.date` range starting at
     slate_date (default: CURRENT_DATE, evaluated server-side so it tracks the
@@ -63,8 +70,7 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
             text(
                 """
                 SELECT pl.player_id, pl.game_id, pl.stat_type, pl.line_value,
-                       pl.over_odds, pl.under_odds, p.name AS player_name,
-                       e.model_prob
+                       pl.over_odds, pl.under_odds, p.name AS player_name
                 FROM (
                     SELECT DISTINCT ON (player_id, game_id, stat_type)
                         player_id, game_id, stat_type, line_value, over_odds, under_odds
@@ -76,8 +82,6 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
                                    AND COALESCE(:slate_date, CURRENT_DATE) + :window_days
                     AND g.sport = :sport
                 JOIN players p ON p.player_id = pl.player_id
-                LEFT JOIN edges e ON e.player_id = pl.player_id
-                    AND e.game_id = pl.game_id AND e.stat_type = pl.stat_type
                 """
             ),
             conn, params={"slate_date": slate_date, "sport": sport, "window_days": window_days},
@@ -86,10 +90,12 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
 
 
 def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
-    """Latest two-sided team-market lines on TODAY'S slate (unfinished games),
-    + model_prob context. See load_player_legs for the slate_date/sport/window_days
-    rationale. markets are per-sport (TEAM_MARKETS[sport]); a sport with no game
-    markets configured (unknown sport) short-circuits to no legs.
+    """Latest two-sided team-market lines on TODAY'S slate (unfinished games).
+    See load_player_legs for the slate_date/sport/window_days rationale and for
+    why model_prob is now always None (the `game_edges` table was dropped with
+    the model teardown, §16/#3B, so its `LEFT JOIN` was removed). markets are
+    per-sport (TEAM_MARKETS[sport]); a sport with no game markets configured
+    (unknown sport) short-circuits to no legs.
     """
     markets = list(TEAM_MARKETS.get(sport, ()))
     if not markets:
@@ -99,8 +105,7 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", wi
             text(
                 """
                 SELECT gl.game_id, gl.market, gl.line_value,
-                       gl.over_odds, gl.under_odds, gl.home_odds, gl.away_odds,
-                       ge.model_prob
+                       gl.over_odds, gl.under_odds, gl.home_odds, gl.away_odds
                 FROM (
                     SELECT DISTINCT ON (game_id, market)
                         game_id, market, line_value, over_odds, under_odds, home_odds, away_odds
@@ -112,7 +117,6 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", wi
                     AND g.date BETWEEN COALESCE(:slate_date, CURRENT_DATE)
                                    AND COALESCE(:slate_date, CURRENT_DATE) + :window_days
                     AND g.sport = :sport
-                LEFT JOIN game_edges ge ON ge.game_id = gl.game_id AND ge.market = gl.market
                 """
             ),
             conn, params={"markets": markets, "slate_date": slate_date, "sport": sport,

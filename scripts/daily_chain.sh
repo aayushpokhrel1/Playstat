@@ -86,11 +86,14 @@ run_chain() {
 	# MARKET odds and needs ONLY games + prop_lines + game_lines (model_prob was
 	# always a context-only LEFT JOIN, never used for ranking), so it never depended
 	# on the model steps — dropping them changes nothing about the card. The four
-	# builder --save steps run right after their two ingestion deps (odds_ingest,
-	# first_inning). Saved rows carry model_prob=None (dashboard shows "model: —
-	# (not used for ranking)") — as they already did on the builder's own pre-edges
-	# rows. Dependencies held: odds_ingest precedes first_inning (game_lines);
-	# settle/clv are independent of the builder.
+	# builder --save steps run right after their single ingestion dep, odds_ingest
+	# (it writes both prop_lines and the NRFI/F5 game_lines the builder reads).
+	# Saved rows carry model_prob=None (dashboard shows "model: — (not used for
+	# ranking)") — the `edges`/`game_edges` tables are gone (§16/#3B) so it is
+	# always None now. The old `first_inning` step (wrote game_predictions, a
+	# now-dropped table read by nothing) was removed 2026-08-06 with the model
+	# code — it never fed the builder (a mistaken KEEP in the #3B spec).
+	# settle is independent of the builder.
 	# Per-step timing (2026-07-24, README §15.9 item 7 B). Profiling ruled out
 	# feature-compute (~77s) and model-training (~2s/stat) as the cause of the
 	# ~7-8h runtime; the feature UPSERT (2.3M immutable rows) is >10min and a big
@@ -169,7 +172,6 @@ run_chain() {
 	_step_retry stats       "$PY" -m ingestion.mlb_backfill --only stats &&
 		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
 		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
-		_step_retry first_inning "$PY" -m modeling.first_inning --days 2 &&
 		_step builder_1.4      "$PY" -m optimizer.builder --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
@@ -190,8 +192,9 @@ run_chain() {
 	# DELETED — the four steps (features/predict_upcoming/edges/backtest) and their
 	# modules/tables are gone, along with the clv step. The market-ranked builder
 	# never depended on them (model_prob was a context-only LEFT JOIN, now always
-	# None), so the chain above (odds -> first_inning -> builders -> multi-sport
-	# -> settle) is unchanged. The /edges, /game-predictions and
+	# None), so the chain above (odds -> builders -> multi-sport -> settle) is
+	# unchanged. first_inning was removed too (dead: wrote the dropped
+	# game_predictions, fed nothing). The /edges, /game-predictions and
 	# /parlay-recommendations endpoints were removed (#3A). To resurrect the model,
 	# recover the deleted modules from git history (pre-3fb41e0 commits).
 }
