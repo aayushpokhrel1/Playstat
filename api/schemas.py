@@ -190,6 +190,10 @@ class BuilderLegOut(BaseModel):
     market_prob: float
     # Shown for context only — never used to rank or filter (README §15.3).
     model_prob: float | None = None
+    # Best-price bookmaker for this leg's shopped odds (line shopping, README
+    # §15.9 item 3). None when unshopped (consensus price) or for legacy rows
+    # predating the field. Additive/defaulted — Budgerr-safe.
+    book: str | None = None
     # Additive team-name context (docs/superpowers/plans/2026-07-28-
     # leg-team-names.md) — resolved from game_id via a batched games+teams
     # join, never required for a leg to be valid. Optional with defaults so

@@ -86,6 +86,35 @@ def test_saved_builder_reads_only_builder_rows_and_unwraps_dict(monkeypatch):
     assert player_leg.player_team_side == "home"
 
 
+def test_saved_builder_leg_exposes_book(monkeypatch):
+    """Line shopping (§15.9 item 3): a leg's shopped `book` round-trips; a
+    legacy leg without the key defaults to None."""
+    builder_row = (
+        91, "2026-08-06 12:00:00-04", 1.4, 0.66, 1.67,
+        {"class": "across_game", "legs": [
+            {"kind": "player", "game_id": 1, "player_id": 10, "stat_type": "hits",
+             "market": None, "side": "over", "odds": -150, "line": 0.5,
+             "label": "X hits over 0.5", "market_prob": 0.66, "model_prob": None,
+             "book": "fanduel"},
+            {"kind": "player", "game_id": 1, "player_id": 11, "stat_type": "runs",
+             "market": None, "side": "over", "odds": -140, "line": 0.5,
+             "label": "Y runs over 0.5", "market_prob": 0.64, "model_prob": None},
+        ]},
+    )
+    games_rows = [(1, 900, 901, "Team Home One", "Team Away One")]
+    players_rows = [(10, 900), (11, 900)]
+    monkeypatch.setattr(
+        main, "engine", _fake_engine([[builder_row], games_rows, players_rows])
+    )
+
+    out = main.saved_builder_parlays(limit=10, tier="all")
+
+    shopped = [l for l in out[0].legs if l.player_id == 10][0]
+    legacy = [l for l in out[0].legs if l.player_id == 11][0]
+    assert shopped.book == "fanduel"     # shopped price's book round-trips
+    assert legacy.book is None           # absent key -> None, no crash
+
+
 # --- GET /parlay-builder/saved?tier= (README §15 Change 3) ------------------
 # tier selects the legs->>'class' filter added to the WHERE clause. Additive:
 # no `tier` (or `tier=player`) must reproduce today's exact query — filtering

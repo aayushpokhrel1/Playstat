@@ -364,7 +364,7 @@ def parlay_builder(
                     player_id=leg["player_id"], stat_type=leg["stat_type"],
                     market=leg["market"], side=leg["side"], line=leg["line_value"],
                     odds=leg["american_odds"], market_prob=leg["market_prob"],
-                    model_prob=leg["model_prob"],
+                    model_prob=leg["model_prob"], book=leg.get("book"),
                     **_resolve_leg_teams(leg, games, players),
                 )
                 for leg in r["legs"]
@@ -461,7 +461,7 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player", sport: str = "m
                         player_id=leg.get("player_id"), stat_type=leg.get("stat_type"),
                         market=leg.get("market"), side=leg["side"], line=leg["line"],
                         odds=leg["odds"], market_prob=leg["market_prob"],
-                        model_prob=leg.get("model_prob"),
+                        model_prob=leg.get("model_prob"), book=leg.get("book"),
                         **_resolve_leg_teams(leg, games, players),
                     )
                     for leg in legs_raw
