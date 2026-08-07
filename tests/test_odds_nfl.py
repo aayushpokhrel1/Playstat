@@ -93,6 +93,10 @@ def test_collect_prop_rows_maps_an_nfl_passing_yards_market():
     assert rows == [{
         "player_name": "Patrick Mahomes", "stat_type": "passing_yards",
         "line_value": 274.5, "over_odds": -110, "under_odds": -105,
+        # Line-shopping best-price columns (§15.9 item 3): None here — this
+        # fixture's odds carry no byBookmaker, so best_price falls back.
+        "best_over_odds": None, "best_over_book": None,
+        "best_under_odds": None, "best_under_book": None,
     }]
 
 
@@ -109,6 +113,9 @@ def test_collect_game_rows_maps_the_nfl_full_game_total():
     assert rows == [{
         "market": "full_game_total", "line_value": 47.5,
         "over_odds": -110, "under_odds": -108,
+        # Line-shopping best-price columns (§15.9 item 3): None — no byBookmaker.
+        "best_over_odds": None, "best_over_book": None,
+        "best_under_odds": None, "best_under_book": None,
     }]
 
 

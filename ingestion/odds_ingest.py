@@ -5,6 +5,7 @@ from sqlalchemy import text
 from ingestion import db, matching
 from ingestion.config import SPORTS
 from ingestion.odds_client import SportsGameOddsClient
+from optimizer.parlay import american_to_decimal
 
 # SportsGameOdds statID -> our player_game_stats stat_type, per sport. Only
 # markets we also ingest actuals for (so edges can be modeled and bets can be
@@ -155,6 +156,36 @@ def parse_american_odds(odds_str):
     return int(odds_str)
 
 
+def best_price(by_bookmaker, line_field, consensus_line):
+    """Best single-book price for one side (README §15.9 item 3, line shopping).
+
+    Among `by_bookmaker` entries that are available AND quote the EXACT
+    consensus line, return (american_odds, bookmaker_id) with the highest
+    decimal odds (best payout, sign-agnostic). line_field is the per-book field
+    holding the line ("overUnder" for ou, "spread" for sp); None means the
+    market has no line (moneyline) so every available book is eligible.
+    Returns (None, None) when nothing qualifies — the builder then falls back to
+    the consensus price for that side.
+    """
+    if not by_bookmaker:
+        return None, None
+    best_dec = best_odds = best_book = None
+    for book, entry in by_bookmaker.items():
+        if not entry.get("available"):
+            continue
+        if line_field is not None:
+            raw = entry.get(line_field)
+            if raw is None or float(raw) != float(consensus_line):
+                continue
+        odds = parse_american_odds(entry.get("odds"))
+        if odds is None:
+            continue
+        dec = american_to_decimal(odds)
+        if best_dec is None or dec > best_dec:
+            best_dec, best_odds, best_book = dec, odds, book
+    return best_odds, best_book
+
+
 def collect_prop_rows(event, stat_map):
     """Group each event's raw over/under odd pairs into one row per (player, stat)."""
     odds = event.get("odds", {})
@@ -183,6 +214,9 @@ def collect_prop_rows(event, stat_map):
         )
         row["line_value"] = odd.get("bookOverUnder")
         row[f"{side}_odds"] = parse_american_odds(odd.get("bookOdds"))
+        b_odds, b_book = best_price(odd.get("byBookmaker"), "overUnder", odd.get("bookOverUnder"))
+        row[f"best_{side}_odds"] = b_odds
+        row[f"best_{side}_book"] = b_book
 
     return list(rows.values())
 
@@ -208,6 +242,9 @@ def collect_game_rows(event, game_markets):
                 row = rows.setdefault(market, {"market": market})
                 row["line_value"] = odd.get("bookOverUnder")
                 row[f"{side}_odds"] = price
+                b_odds, b_book = best_price(odd.get("byBookmaker"), "overUnder", odd.get("bookOverUnder"))
+                row[f"best_{side}_odds"] = b_odds
+                row[f"best_{side}_book"] = b_book
             else:  # sp / ml — home/away
                 if side not in ("home", "away"):
                     continue
@@ -301,14 +338,18 @@ def ingest_odds(sport="nba", dry_run=False):
             for row in game_rows:
                 conn.execute(
                     text(
-                        "INSERT INTO game_lines (game_id, market, line_value, over_odds, under_odds, home_odds, away_odds) "
-                        "VALUES (:game_id, :market, :line_value, :over_odds, :under_odds, :home_odds, :away_odds)"
+                        "INSERT INTO game_lines (game_id, market, line_value, over_odds, under_odds, home_odds, away_odds, "
+                        "best_over_odds, best_over_book, best_under_odds, best_under_book) "
+                        "VALUES (:game_id, :market, :line_value, :over_odds, :under_odds, :home_odds, :away_odds, "
+                        ":best_over_odds, :best_over_book, :best_under_odds, :best_under_book)"
                     ),
                     {
                         "game_id": game_id, "market": row["market"],
                         "line_value": row.get("line_value"),
                         "over_odds": row.get("over_odds"), "under_odds": row.get("under_odds"),
                         "home_odds": row.get("home_odds"), "away_odds": row.get("away_odds"),
+                        "best_over_odds": row.get("best_over_odds"), "best_over_book": row.get("best_over_book"),
+                        "best_under_odds": row.get("best_under_odds"), "best_under_book": row.get("best_under_book"),
                     },
                 )
                 rows_inserted += 1
@@ -320,8 +361,10 @@ def ingest_odds(sport="nba", dry_run=False):
                 conn.execute(
                     text(
                         "INSERT INTO prop_lines "
-                        "(player_id, game_id, stat_type, line_value, over_odds, under_odds) "
-                        "VALUES (:player_id, :game_id, :stat_type, :line_value, :over_odds, :under_odds)"
+                        "(player_id, game_id, stat_type, line_value, over_odds, under_odds, "
+                        "best_over_odds, best_over_book, best_under_odds, best_under_book) "
+                        "VALUES (:player_id, :game_id, :stat_type, :line_value, :over_odds, :under_odds, "
+                        ":best_over_odds, :best_over_book, :best_under_odds, :best_under_book)"
                     ),
                     {
                         "player_id": player_id,
@@ -330,6 +373,8 @@ def ingest_odds(sport="nba", dry_run=False):
                         "line_value": row.get("line_value"),
                         "over_odds": row.get("over_odds"),
                         "under_odds": row.get("under_odds"),
+                        "best_over_odds": row.get("best_over_odds"), "best_over_book": row.get("best_over_book"),
+                        "best_under_odds": row.get("best_under_odds"), "best_under_book": row.get("best_under_book"),
                     },
                 )
                 rows_inserted += 1
