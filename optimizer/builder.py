@@ -70,10 +70,13 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
             text(
                 """
                 SELECT pl.player_id, pl.game_id, pl.stat_type, pl.line_value,
-                       pl.over_odds, pl.under_odds, p.name AS player_name
+                       pl.over_odds, pl.under_odds, p.name AS player_name,
+                       pl.best_over_odds, pl.best_over_book,
+                       pl.best_under_odds, pl.best_under_book
                 FROM (
                     SELECT DISTINCT ON (player_id, game_id, stat_type)
-                        player_id, game_id, stat_type, line_value, over_odds, under_odds
+                        player_id, game_id, stat_type, line_value, over_odds, under_odds,
+                        best_over_odds, best_over_book, best_under_odds, best_under_book
                     FROM prop_lines
                     ORDER BY player_id, game_id, stat_type, pulled_at DESC
                 ) pl
@@ -105,10 +108,16 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", wi
             text(
                 """
                 SELECT gl.game_id, gl.market, gl.line_value,
-                       gl.over_odds, gl.under_odds, gl.home_odds, gl.away_odds
+                       gl.over_odds, gl.under_odds, gl.home_odds, gl.away_odds,
+                       gl.best_over_odds, gl.best_over_book,
+                       gl.best_under_odds, gl.best_under_book,
+                       gl.best_home_odds, gl.best_home_book,
+                       gl.best_away_odds, gl.best_away_book
                 FROM (
                     SELECT DISTINCT ON (game_id, market)
-                        game_id, market, line_value, over_odds, under_odds, home_odds, away_odds
+                        game_id, market, line_value, over_odds, under_odds, home_odds, away_odds,
+                        best_over_odds, best_over_book, best_under_odds, best_under_book,
+                        best_home_odds, best_home_book, best_away_odds, best_away_book
                     FROM game_lines
                     WHERE market = ANY(:markets)
                     ORDER BY game_id, market, pulled_at DESC
@@ -220,6 +229,9 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
                     "odds": leg["american_odds"], "line": leg["line_value"],
                     "label": leg["label"], "market_prob": leg["market_prob"],
                     "model_prob": leg["model_prob"],
+                    # Best-price book for the shopped odds (§15.9 item 3). .get:
+                    # legacy/hand-built legs without the key store book=None.
+                    "book": leg.get("book"),
                 }
                 for leg in r["legs"]
             ]

@@ -166,6 +166,23 @@ def test_save_builds_defaults_to_across_game_class_unchanged():
     assert blob["class"] == "across_game"
 
 
+def test_save_builds_writes_book_into_legs_json():
+    """Line shopping (§15.9 item 3): a leg's shopped `book` round-trips into the
+    stored legs JSONB."""
+    engine = _CapturingEngine()
+    builder.save_builds(engine, 1.4, _one_result("player", book="fanduel"))
+    blob = json.loads(engine.calls[0]["legs"])
+    assert blob["legs"][0]["book"] == "fanduel"
+
+
+def test_save_builds_book_defaults_none_when_absent():
+    """A hand-built/legacy leg without a `book` key stores book=None (no crash)."""
+    engine = _CapturingEngine()
+    builder.save_builds(engine, 1.4, _one_result("player"))  # _one_result has no book
+    blob = json.loads(engine.calls[0]["legs"])
+    assert blob["legs"][0]["book"] is None
+
+
 # --- sport filtering (NFL builder sub-project #2) ----------------------------
 
 @pytest.mark.parametrize("fn", [builder.load_player_legs, builder.load_team_legs])
