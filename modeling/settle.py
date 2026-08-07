@@ -178,7 +178,7 @@ def settle_builder_parlays(engine):
         candidates = conn.execute(
             text(
                 """
-                SELECT pr.parlay_id, pr.created_at, pr.legs
+                SELECT pr.parlay_id, pr.created_at, pr.stake, pr.legs
                 FROM parlay_recommendations pr
                 WHERE pr.kind = 'builder' AND NOT EXISTS (
                     SELECT 1 FROM recommendation_outcomes ro
@@ -190,10 +190,15 @@ def settle_builder_parlays(engine):
             print("settle: no new builder parlays to evaluate.")
             return 0
 
-        parsed = [(pid, ca, _as_legs_list(raw)) for pid, ca, raw in candidates]
-        parsed = [(pid, ca, blob["legs"] if isinstance(blob, dict) else blob)
-                  for pid, ca, blob in parsed]
-        game_ids = sorted({int(l["game_id"]) for _, _, legs in parsed for l in legs})
+        # stake: the Kelly-sized paper stake written by optimizer/stake.py
+        # (README §15.9 item 4). NULL means "not sized" (historical rows, or a
+        # slate the stake pass didn't touch) -> fall back to the prior flat 1.0u
+        # so settle stays non-breaking for any unsized row.
+        parsed = [(pid, ca, (1.0 if stake is None else float(stake)), _as_legs_list(raw))
+                  for pid, ca, stake, raw in candidates]
+        parsed = [(pid, ca, stake, blob["legs"] if isinstance(blob, dict) else blob)
+                  for pid, ca, stake, blob in parsed]
+        game_ids = sorted({int(l["game_id"]) for _, _, _stake, legs in parsed for l in legs})
 
         games = pd.read_sql(text("SELECT game_id, status FROM games WHERE game_id = ANY(:g)"),
                             conn, params={"g": game_ids})
@@ -246,7 +251,7 @@ def settle_builder_parlays(engine):
 
     inserted = 0
     with engine.begin() as conn:
-        for parlay_id, created_at, legs in parsed:
+        for parlay_id, created_at, stake, legs in parsed:
             results, odds_list, audit, ready = [], [], [], True
             for leg in legs:
                 gid = int(leg["game_id"])
@@ -331,16 +336,16 @@ def settle_builder_parlays(engine):
                               "result": res})
             if not ready:
                 continue
-            result, decimal_odds, pnl = parlay_result(results, odds_list)
+            result, decimal_odds, pnl = parlay_result(results, odds_list, stake=stake)
             conn.execute(
                 text(
                     """
                     INSERT INTO recommendation_outcomes
                         (bet_type, parlay_id, result, n_legs, stake, decimal_odds, pnl, legs, recommended_at)
-                    VALUES ('parlay', :pid, :res, :n, 1, :co, :pnl, CAST(:legs AS JSONB), :ra)
+                    VALUES ('parlay', :pid, :res, :n, :stake, :co, :pnl, CAST(:legs AS JSONB), :ra)
                     """
                 ),
-                {"pid": int(parlay_id), "res": result, "n": len(legs),
+                {"pid": int(parlay_id), "res": result, "n": len(legs), "stake": stake,
                  "co": float(decimal_odds), "pnl": float(pnl),
                  "legs": json.dumps(audit), "ra": created_at})
             inserted += 1

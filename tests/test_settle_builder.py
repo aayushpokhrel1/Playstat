@@ -109,6 +109,42 @@ def test_settle_function_voids_dnp_legs_via_leg_status(fn):
     assert '"dnp": True' in source
 
 
+# --- Kelly stake sizing (README §15.9 item 4) -------------------------------
+# The paper stake is no longer a flat 1u: optimizer/stake.py writes a Kelly
+# stake onto parlay_recommendations.stake and settle books pnl at that stake.
+# parlay_result already takes stake=; these pin the scaling + the wiring.
+
+def test_parlay_result_scales_win_pnl_by_stake():
+    result, odds, pnl = parlay_result(["hit", "hit"], [1.5, 1.4], stake=0.7)
+    assert result == "win"
+    assert odds == pytest.approx(2.1)
+    assert pnl == pytest.approx(0.7 * (2.1 - 1))  # stake * (combined_decimal - 1)
+
+
+def test_parlay_result_scales_loss_pnl_by_stake():
+    result, _, pnl = parlay_result(["hit", "miss"], [1.5, 1.4], stake=0.7)
+    assert result == "loss"
+    assert pnl == pytest.approx(-0.7)  # -stake
+
+
+def test_parlay_result_zero_stake_books_zero_pnl():
+    win_pnl = parlay_result(["hit", "hit"], [1.5, 1.4], stake=0.0)[2]
+    loss_pnl = parlay_result(["hit", "miss"], [1.5, 1.4], stake=0.0)[2]
+    assert win_pnl == 0.0
+    assert loss_pnl == 0.0
+
+
+def test_settle_builder_threads_kelly_stake_with_null_fallback():
+    """Source guard (no live DB): settle_builder_parlays must select pr.stake,
+    fall back to 1.0 when NULL, pass stake= to parlay_result, and INSERT :stake
+    (not a hardcoded 1). Mirrors the DNP-void source guard above."""
+    source = inspect.getsource(settle_builder_parlays)
+    assert "pr.stake" in source
+    assert "1.0 if stake is None" in source
+    assert "parlay_result(results, odds_list, stake=stake)" in source
+    assert ":stake" in source
+
+
 # --- NFL player legs settle through the same sport-agnostic path (tier #2) ---
 # settle_builder_parlays looks up player_game_stats[(player_id, game_id,
 # stat_type)] and scores over/under vs the line -- nothing MLB-specific. These
@@ -221,7 +257,9 @@ def test_nfl_game_market_parlay_settles(monkeypatch):
     # game 222: total 30+20=50 > 44.5 -> over wins (existing SUM/over-under path).
     # game 333: home 27 away 17, home line -3.5 -> margin 10 covers -> home wins.
     blob = {"class": "game_tier", "sport": "nfl", "legs": legs}
-    candidate_rows = [(1, created_at, blob)]
+    # 4-tuple now: (parlay_id, created_at, stake, legs). stake=0.7 exercises the
+    # Kelly stake threading (README §15.9 item 4).
+    candidate_rows = [(1, created_at, 0.7, blob)]
 
     games_df = pd.DataFrame([
         {"game_id": 111, "status": "FT"},
@@ -271,6 +309,9 @@ def test_nfl_game_market_parlay_settles(monkeypatch):
     assert params["res"] == "win"
     assert params["pnl"] > 0
     assert params["n"] == 3
+    # Kelly stake threaded through to the recorded row + pnl scaled by it.
+    assert params["stake"] == pytest.approx(0.7)
+    assert params["pnl"] == pytest.approx(0.7 * (params["co"] - 1))
 
     audit = params["legs"]
     import json
