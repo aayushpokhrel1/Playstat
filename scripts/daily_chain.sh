@@ -116,7 +116,15 @@ run_chain() {
 	# skip, return 0. Offseason Thursday: the builder finds no candidate legs, exits 0.
 	# Called best-effort (see the chain below): an NFL failure is logged but never
 	# aborts the MLB chain or pages — NFL is secondary/seasonal, live at preseason (~Aug).
+	# MLB-ONLY odds (2026-08-07, user-chosen SGO free-tier quota conservation — README
+	# §15.9 item 3 note). The non-MLB SGO odds pulls drain the shared 2,500-object/mo
+	# free budget; they are gated off here so the monthly quota goes to MLB (the only
+	# sport reliably producing cards). Reversible with NO code edit: run the chain with
+	# PLAYSTAT_MLB_ONLY_ODDS=0 to restore full multi-sport odds. The *_scores steps stay
+	# on (non-SGO APIs; they keep settle able to resolve any pending non-MLB parlays).
+	_mlb_only() { [ "${PLAYSTAT_MLB_ONLY_ODDS:-1}" = 1 ]; }
 	_nfl_weekly_build() {
+		if _mlb_only; then echo "=== nfl build: skipped (MLB-only odds, PLAYSTAT_MLB_ONLY_ODDS) ==="; return 0; fi
 		if [ "$(date +%u)" -ne 4 ]; then echo "=== nfl build: skipped (not Thursday) ==="; return 0; fi
 		_step_retry nfl_odds  "$PY" -m ingestion.odds_ingest --sport nfl &&
 			_step nfl_builder_1.4 "$PY" -m optimizer.builder --sport nfl --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
@@ -130,6 +138,7 @@ run_chain() {
 	# but never aborts the MLB chain or pages. Live at season (~October). The score
 	# refresh uses --season current so it always targets the live NBA season.
 	_nba_daily_build() {
+		if _mlb_only; then echo "=== nba build: skipped (MLB-only odds, PLAYSTAT_MLB_ONLY_ODDS) ==="; return 0; fi
 		_step_retry nba_odds  "$PY" -m ingestion.odds_ingest --sport nba &&
 			_step nba_builder_1.4 "$PY" -m optimizer.builder --sport nba --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step nba_builder_2.0 "$PY" -m optimizer.builder --sport nba --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
@@ -140,6 +149,7 @@ run_chain() {
 	# tier. Best-effort: an MLS failure logs but never aborts the MLB chain.
 	# Live only with a paid API-Sports plan (current-season stats); inert on free.
 	_mls_daily_build() {
+		if _mlb_only; then echo "=== mls build: skipped (MLB-only odds, PLAYSTAT_MLB_ONLY_ODDS) ==="; return 0; fi
 		_step_retry mls_odds  "$PY" -m ingestion.odds_ingest --sport mls &&
 			_step mls_builder_1.4 "$PY" -m optimizer.builder --sport mls --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step mls_builder_2.0 "$PY" -m optimizer.builder --sport mls --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
@@ -150,6 +160,7 @@ run_chain() {
 	# a UCL failure logs but never aborts the MLB chain. Live only with a paid
 	# API-Sports plan (current-season stats); inert on free.
 	_ucl_daily_build() {
+		if _mlb_only; then echo "=== ucl build: skipped (MLB-only odds, PLAYSTAT_MLB_ONLY_ODDS) ==="; return 0; fi
 		_step_retry ucl_odds  "$PY" -m ingestion.odds_ingest --sport ucl &&
 			_step ucl_builder_1.4 "$PY" -m optimizer.builder --sport ucl --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step ucl_builder_2.0 "$PY" -m optimizer.builder --sport ucl --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
@@ -163,12 +174,16 @@ run_chain() {
 	# is harmlessly inert (0 games -> 0 legs) in the offseason. nhl_scores below
 	# defaults --season to the live season (current_nhl_season()).
 	_nhl_daily_build() {
+		if _mlb_only; then echo "=== nhl build: skipped (MLB-only odds, PLAYSTAT_MLB_ONLY_ODDS) ==="; return 0; fi
 		_step_retry nhl_odds  "$PY" -m ingestion.odds_ingest --sport nhl &&
 			_step nhl_builder_1.4 "$PY" -m optimizer.builder --sport nhl --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step nhl_builder_2.0 "$PY" -m optimizer.builder --sport nhl --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step nhl_game_1.4    "$PY" -m optimizer.builder --sport nhl --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 			_step nhl_game_2.0    "$PY" -m optimizer.builder --sport nhl --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save
 	}
+	# --- MLB core build (stats -> linescores -> odds -> builders -> multi-sport). May
+	# fail on an SGO 429 / quota-out morning; settle runs AFTER this group regardless. ---
+	{
 	_step_retry stats       "$PY" -m ingestion.mlb_backfill --only stats &&
 		_step_retry linescores  "$PY" -m ingestion.mlb_backfill --only linescores &&
 		_step_retry odds        "$PY" -m ingestion.odds_ingest --sport mlb &&
@@ -185,8 +200,18 @@ run_chain() {
 		{ _ucl_daily_build || echo "=== ucl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry ucl_scores "$PY" -m ingestion.soccer_backfill --sport ucl --season 2024 --only fixtures || echo "=== ucl_scores: FAILED (non-fatal) ==="; } &&
 		{ _nhl_daily_build || echo "=== nhl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
-		{ _step_retry nhl_scores "$PY" -m ingestion.nhl_backfill --only games || echo "=== nhl_scores: FAILED (non-fatal) ==="; } &&
-		_step settle           "$PY" -m modeling.settle
+		{ _step_retry nhl_scores "$PY" -m ingestion.nhl_backfill --only games || echo "=== nhl_scores: FAILED (non-fatal) ==="; }
+	}
+	core_rc=$?
+	# settle is INDEPENDENT of odds/builders — it reads finished-game stats already in
+	# the DB — so it MUST run even when the MLB odds pull 429s or a build fails. Before
+	# 2026-08-07 settle sat at the tail of the core && chain, so an odds 429 short-
+	# circuited the chain and settle never ran, starving the paper ledger on a quota-out
+	# morning. Now it runs unconditionally; the chain still FAILS (pages) iff the core
+	# build OR settle failed, so an empty-slate morning is still surfaced.
+	_step settle           "$PY" -m modeling.settle
+	settle_rc=$?
+	[ "$core_rc" -eq 0 ] && [ "$settle_rc" -eq 0 ]
 	# MODEL PIPELINE DELETED 2026-08-06 (README §16, roadmap #3B, user-approved).
 	# The model was shelved 2026-07-29 (frozen steps commented out here) and then
 	# DELETED — the four steps (features/predict_upcoming/edges/backtest) and their
