@@ -479,22 +479,24 @@ _TIER_SORT_ORDER = {"player": 0, "team": 1, "game": 2}
 
 
 def _shape_builder_record(rows):
-    """Pure: rows are (cls, target_payout, n, wins, losses, pushes, pnl) as
-    produced by the GROUP BY in builder_record() below. Maps cls->tier via
-    _CLASS_TO_TIER, computes roi=pnl/n (0.0 when n==0), casts Decimal
-    target_payout/pnl to float, and orders player-before-team then ascending
-    target_payout. DB-free and unit-testable without a database.
+    """Pure: rows are (cls, target_payout, n, wins, losses, pushes, staked, pnl)
+    as produced by the GROUP BY in builder_record() below. Maps cls->tier via
+    _CLASS_TO_TIER, computes roi=pnl/staked (0.0 when staked==0) so variable
+    Kelly stakes (README §15.9 item 4) aggregate correctly, casts Decimals to
+    float, and orders player-before-team then ascending target_payout. DB-free
+    and unit-testable without a database.
     """
     shaped = []
-    for cls, target_payout, n, wins, losses, pushes, pnl in rows:
+    for cls, target_payout, n, wins, losses, pushes, staked, pnl in rows:
         tier = _CLASS_TO_TIER.get(cls, cls)
         n = int(n)
+        staked = float(staked or 0)
         pnl = float(pnl or 0)
         shaped.append(
             BuilderRecordOut(
                 tier=tier, target_payout=float(target_payout),
                 n=n, wins=int(wins), losses=int(losses), pushes=int(pushes),
-                pnl=pnl, roi=(pnl / n if n else 0.0),
+                staked=staked, pnl=pnl, roi=(pnl / staked if staked else 0.0),
             )
         )
     shaped.sort(key=lambda r: (_TIER_SORT_ORDER.get(r.tier, 2), r.target_payout))
@@ -515,6 +517,7 @@ def builder_record(sport: str = "mlb"):
                    sum((ro.result='win')::int)  AS wins,
                    sum((ro.result='loss')::int) AS losses,
                    sum((ro.result='push')::int) AS pushes,
+                   sum(ro.stake) AS staked,
                    sum(ro.pnl) AS pnl
             FROM recommendation_outcomes ro
             JOIN parlay_recommendations pr ON pr.parlay_id = ro.parlay_id
@@ -528,21 +531,23 @@ def builder_record(sport: str = "mlb"):
 
 
 def _shape_builder_record_daily(rows):
-    """Pure: rows are (slate_date, n, wins, losses, pushes, pnl) as produced
-    by the GROUP BY date(pr.created_at) in builder_record_daily() below.
-    Computes roi=pnl/n (0.0 when n==0), casts Decimal pnl to float, and
-    stringifies the date. Rows already arrive newest-first from the SQL
-    ORDER BY, and that order is preserved here. DB-free and unit-testable
-    without a database.
+    """Pure: rows are (slate_date, n, wins, losses, pushes, staked, pnl) as
+    produced by the GROUP BY date(pr.created_at) in builder_record_daily()
+    below. Computes roi=pnl/staked (0.0 when staked==0) so variable Kelly
+    stakes aggregate correctly, casts Decimal pnl to float, and stringifies
+    the date. Rows already arrive newest-first from the SQL ORDER BY, and that
+    order is preserved here. DB-free and unit-testable without a database.
     """
     shaped = []
-    for slate_date, n, wins, losses, pushes, pnl in rows:
+    for slate_date, n, wins, losses, pushes, staked, pnl in rows:
         n = int(n)
+        staked = float(staked or 0)
         pnl = float(pnl or 0)
         shaped.append(
             BuilderRecordDailyOut(
                 date=str(slate_date), n=n, wins=int(wins), losses=int(losses),
-                pushes=int(pushes), pnl=pnl, roi=(pnl / n if n else 0.0),
+                pushes=int(pushes), staked=staked, pnl=pnl,
+                roi=(pnl / staked if staked else 0.0),
             )
         )
     return shaped
@@ -561,7 +566,7 @@ def builder_record_daily(sport: str = "mlb"):
             """
             SELECT date(pr.created_at) AS slate_date, count(*) n,
                    sum((ro.result='win')::int) wins, sum((ro.result='loss')::int) losses,
-                   sum((ro.result='push')::int) pushes, sum(ro.pnl) pnl
+                   sum((ro.result='push')::int) pushes, sum(ro.stake) staked, sum(ro.pnl) pnl
             FROM recommendation_outcomes ro JOIN parlay_recommendations pr ON pr.parlay_id=ro.parlay_id
             WHERE pr.kind='builder'
               AND COALESCE(pr.legs->>'sport', 'mlb') = :sport

@@ -6,6 +6,10 @@ very different bets: the ~67%-to-hit 1.4x player parlays, the ~50%-to-hit
 2.0x player parlays, and the team tier. This endpoint returns one row per
 (tier, target_payout) instead, so the dashboard can render them separately.
 
+Row shape carries `staked` (sum of Kelly stakes, README §15.9 item 4) before
+pnl; ROI is pnl/staked (stake-weighted), not pnl/n — variable Kelly stakes
+would otherwise aggregate wrong.
+
 CRITICAL SAFETY: there is no test DB -- ingestion.db.get_engine() is the LIVE
 production database. Like tests/test_parlay_recommendations_api.py, this
 file never opens a real connection: the pure helper (_shape_builder_record)
@@ -21,35 +25,37 @@ from api.schemas import BuilderRecordDailyOut, BuilderRecordOut
 
 
 # --- _shape_builder_record: the pure row -> BuilderRecordOut helper --------
+# Row: (cls, target_payout, n, wins, losses, pushes, staked, pnl)
 
 
 def test_maps_across_game_to_player_tier():
-    # Live data (docs/superpowers/plans/2026-07-25-builder-record-per-tier.md):
-    # Player 1.4x (across_game): 18-6-1, pnl -0.14
-    rows = [("across_game", 1.4, 25, 18, 6, 1, -0.14)]
+    # Player 1.4x (across_game): 18-6-1, staked 25, pnl -0.14
+    rows = [("across_game", 1.4, 25, 18, 6, 1, 25, -0.14)]
     out = api_main._shape_builder_record(rows)
     assert len(out) == 1
     assert out[0].tier == "player"
 
 
 def test_maps_team_tier_to_team_tier_label():
-    # Team 1.4x (team_tier): 7-3-0, pnl +9.59
-    rows = [("team_tier", 1.4, 10, 7, 3, 0, 9.59)]
+    # Team 1.4x (team_tier): 7-3-0, staked 10, pnl +9.59
+    rows = [("team_tier", 1.4, 10, 7, 3, 0, 10, 9.59)]
     out = api_main._shape_builder_record(rows)
     assert len(out) == 1
     assert out[0].tier == "team"
 
 
-def test_roi_is_pnl_over_n():
-    # Player 2.0x (across_game): 12-12-2, pnl -5.21
-    rows = [("across_game", 2.0, 26, 12, 12, 2, -5.21)]
+def test_roi_is_pnl_over_staked_not_n():
+    # staked (18.0) deliberately != n (26): ROI must divide by staked.
+    rows = [("across_game", 2.0, 26, 12, 12, 2, 18.0, -5.21)]
     out = api_main._shape_builder_record(rows)
     assert out[0].n == 26
-    assert out[0].roi == -5.21 / 26
+    assert out[0].staked == 18.0
+    assert out[0].roi == -5.21 / 18.0
 
 
-def test_roi_is_zero_when_n_is_zero():
-    rows = [("across_game", 1.4, 0, 0, 0, 0, 0.0)]
+def test_roi_is_zero_when_staked_is_zero():
+    # All stake=0 cards (no shopped edge): staked 0 -> ROI 0, no divide-by-zero.
+    rows = [("across_game", 1.4, 3, 0, 3, 0, 0.0, 0.0)]
     out = api_main._shape_builder_record(rows)
     assert out[0].roi == 0.0
 
@@ -57,10 +63,10 @@ def test_roi_is_zero_when_n_is_zero():
 def test_orders_player_before_team_then_ascending_target_payout():
     # Deliberately fed out of order: team before player, descending payout.
     rows = [
-        ("team_tier", 2.0, 10, 7, 3, 0, 9.59),
-        ("team_tier", 1.4, 10, 7, 3, 0, 9.59),
-        ("across_game", 2.0, 26, 12, 12, 2, -5.21),
-        ("across_game", 1.4, 25, 18, 6, 1, -0.14),
+        ("team_tier", 2.0, 10, 7, 3, 0, 10, 9.59),
+        ("team_tier", 1.4, 10, 7, 3, 0, 10, 9.59),
+        ("across_game", 2.0, 26, 12, 12, 2, 26, -5.21),
+        ("across_game", 1.4, 25, 18, 6, 1, 25, -0.14),
     ]
     out = api_main._shape_builder_record(rows)
     assert [(r.tier, r.target_payout) for r in out] == [
@@ -72,12 +78,14 @@ def test_orders_player_before_team_then_ascending_target_payout():
 
 
 def test_decimal_inputs_become_float_outputs():
-    rows = [("across_game", Decimal("1.4"), 25, 18, 6, 1, Decimal("-0.14"))]
+    rows = [("across_game", Decimal("1.4"), 25, 18, 6, 1, Decimal("25"), Decimal("-0.14"))]
     out = api_main._shape_builder_record(rows)
     assert out[0].target_payout == 1.4
     assert isinstance(out[0].target_payout, float)
     assert out[0].pnl == -0.14
     assert isinstance(out[0].pnl, float)
+    assert out[0].staked == 25.0
+    assert isinstance(out[0].staked, float)
 
 
 def test_empty_rows_returns_empty_list():
@@ -122,10 +130,10 @@ class _FakeEngine:
 
 def test_endpoint_shapes_grouped_rows(monkeypatch):
     rows = [
-        ("across_game", Decimal("1.4"), 25, 18, 6, 1, Decimal("-0.14")),
-        ("across_game", Decimal("2.0"), 26, 12, 12, 2, Decimal("-5.21")),
-        ("team_tier", Decimal("1.4"), 10, 7, 3, 0, Decimal("9.59")),
-        ("team_tier", Decimal("2.0"), 10, 7, 3, 0, Decimal("9.59")),
+        ("across_game", Decimal("1.4"), 25, 18, 6, 1, Decimal("25"), Decimal("-0.14")),
+        ("across_game", Decimal("2.0"), 26, 12, 12, 2, Decimal("26"), Decimal("-5.21")),
+        ("team_tier", Decimal("1.4"), 10, 7, 3, 0, Decimal("10"), Decimal("9.59")),
+        ("team_tier", Decimal("2.0"), 10, 7, 3, 0, Decimal("10"), Decimal("9.59")),
     ]
     fake_engine = _FakeEngine([rows])
     monkeypatch.setattr(api_main, "engine", fake_engine)
@@ -150,18 +158,21 @@ def test_endpoint_empty_queue_returns_empty_list(monkeypatch):
 
 
 # --- _shape_builder_record_daily: the pure per-day helper (Phase 2) --------
+# Row: (slate_date, n, wins, losses, pushes, staked, pnl)
 
 
-def test_daily_roi_is_pnl_over_n():
-    rows = [("2026-07-27", 26, 12, 12, 2, -5.21)]
+def test_daily_roi_is_pnl_over_staked_not_n():
+    # staked (18.0) != n (26): ROI divides by staked.
+    rows = [("2026-07-27", 26, 12, 12, 2, 18.0, -5.21)]
     out = api_main._shape_builder_record_daily(rows)
     assert len(out) == 1
     assert out[0].date == "2026-07-27"
-    assert out[0].roi == -5.21 / 26
+    assert out[0].staked == 18.0
+    assert out[0].roi == -5.21 / 18.0
 
 
-def test_daily_roi_is_zero_when_n_is_zero():
-    rows = [("2026-07-27", 0, 0, 0, 0, 0.0)]
+def test_daily_roi_is_zero_when_staked_is_zero():
+    rows = [("2026-07-27", 3, 0, 3, 0, 0.0, 0.0)]
     out = api_main._shape_builder_record_daily(rows)
     assert out[0].roi == 0.0
 
@@ -169,16 +180,16 @@ def test_daily_roi_is_zero_when_n_is_zero():
 def test_daily_preserves_newest_first_order():
     # The SQL side does ORDER BY 1 DESC; the pure helper must not re-sort.
     rows = [
-        ("2026-07-27", 10, 7, 3, 0, 9.59),
-        ("2026-07-26", 8, 5, 2, 1, 1.20),
-        ("2026-07-25", 7, 6, 1, 0, 4.10),
+        ("2026-07-27", 10, 7, 3, 0, 10, 9.59),
+        ("2026-07-26", 8, 5, 2, 1, 8, 1.20),
+        ("2026-07-25", 7, 6, 1, 0, 7, 4.10),
     ]
     out = api_main._shape_builder_record_daily(rows)
     assert [r.date for r in out] == ["2026-07-27", "2026-07-26", "2026-07-25"]
 
 
 def test_daily_decimal_pnl_becomes_float():
-    rows = [("2026-07-27", 25, 18, 6, 1, Decimal("-0.14"))]
+    rows = [("2026-07-27", 25, 18, 6, 1, Decimal("25"), Decimal("-0.14"))]
     out = api_main._shape_builder_record_daily(rows)
     assert out[0].pnl == -0.14
     assert isinstance(out[0].pnl, float)
@@ -187,7 +198,7 @@ def test_daily_decimal_pnl_becomes_float():
 def test_daily_date_object_becomes_string():
     from datetime import date as date_type
 
-    rows = [(date_type(2026, 7, 27), 25, 18, 6, 1, -0.14)]
+    rows = [(date_type(2026, 7, 27), 25, 18, 6, 1, 25, -0.14)]
     out = api_main._shape_builder_record_daily(rows)
     assert out[0].date == "2026-07-27"
 
@@ -201,8 +212,8 @@ def test_daily_empty_rows_returns_empty_list():
 
 def test_daily_endpoint_shapes_grouped_rows_newest_first(monkeypatch):
     rows = [
-        ("2026-07-27", 10, 7, 3, 0, Decimal("9.59")),
-        ("2026-07-26", 8, 5, 2, 1, Decimal("1.20")),
+        ("2026-07-27", 10, 7, 3, 0, Decimal("10"), Decimal("9.59")),
+        ("2026-07-26", 8, 5, 2, 1, Decimal("8"), Decimal("1.20")),
     ]
     fake_engine = _FakeEngine([rows])
     monkeypatch.setattr(api_main, "engine", fake_engine)
@@ -240,6 +251,13 @@ def test_record_sql_has_sport_coalesce_filter():
         assert "COALESCE(pr.legs->>'sport', 'mlb') = :sport" in src
 
 
+def test_record_sql_sums_stake_for_stake_weighted_roi():
+    # README §15.9 item 4: variable Kelly stakes -> ROI must be pnl/SUM(stake).
+    for fn in (api_main.builder_record, api_main.builder_record_daily):
+        src = inspect.getsource(fn)
+        assert "sum(ro.stake)" in src
+
+
 class _CapturingConn:
     def __init__(self, rows, calls):
         self._rows, self._calls = rows, calls
@@ -264,14 +282,14 @@ class _CapturingEngine:
 
 
 def test_builder_record_threads_sport_param(monkeypatch):
-    eng = _CapturingEngine([("across_game", 1.4, 25, 18, 6, 1, -0.14)])
+    eng = _CapturingEngine([("across_game", 1.4, 25, 18, 6, 1, 25, -0.14)])
     monkeypatch.setattr(api_main, "engine", eng)
     api_main.builder_record(sport="nfl")
     assert eng.calls[0]["sport"] == "nfl"
 
 
 def test_builder_record_daily_threads_sport_param(monkeypatch):
-    eng = _CapturingEngine([("2026-09-11", 5, 3, 2, 0, 1.2)])
+    eng = _CapturingEngine([("2026-09-11", 5, 3, 2, 0, 5, 1.2)])
     monkeypatch.setattr(api_main, "engine", eng)
     api_main.builder_record_daily(sport="nfl")
     assert eng.calls[0]["sport"] == "nfl"
@@ -288,16 +306,16 @@ def test_builder_record_defaults_sport_to_mlb(monkeypatch):
 
 
 def test_game_tier_maps_to_game_label():
-    rows = [("game_tier", 1.4, 5, 3, 2, 0, 1.2)]
+    rows = [("game_tier", 1.4, 5, 3, 2, 0, 5, 1.2)]
     out = api_main._shape_builder_record(rows)
     assert out[0].tier == "game"
 
 
 def test_tier_sort_orders_player_team_game():
     rows = [
-        ("game_tier", 1.4, 5, 3, 2, 0, 1.2),
-        ("team_tier", 1.4, 5, 3, 2, 0, 1.2),
-        ("across_game", 1.4, 5, 3, 2, 0, 1.2),
+        ("game_tier", 1.4, 5, 3, 2, 0, 5, 1.2),
+        ("team_tier", 1.4, 5, 3, 2, 0, 5, 1.2),
+        ("across_game", 1.4, 5, 3, 2, 0, 5, 1.2),
     ]
     out = api_main._shape_builder_record(rows)
     assert [r.tier for r in out] == ["player", "team", "game"]

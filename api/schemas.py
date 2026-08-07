@@ -239,8 +239,9 @@ class BuilderRecordOut(BaseModel):
     wins: int
     losses: int
     pushes: int
+    staked: float = 0.0  # sum of Kelly stakes (README §15.9 item 4); additive
     pnl: float
-    roi: float           # pnl / n (stake is 1u/parlay); 0.0 when n == 0
+    roi: float           # pnl / staked (stake-weighted); 0.0 when staked == 0
 
 
 class BuilderRecordDailyOut(BaseModel):
@@ -254,5 +255,6 @@ class BuilderRecordDailyOut(BaseModel):
     wins: int
     losses: int
     pushes: int
+    staked: float = 0.0  # sum of Kelly stakes (README §15.9 item 4); additive
     pnl: float
-    roi: float           # pnl / n; 0.0 when n == 0
+    roi: float           # pnl / staked (stake-weighted); 0.0 when staked == 0
