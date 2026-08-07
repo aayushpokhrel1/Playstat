@@ -24,10 +24,21 @@ So the per-parlay edge is defined as:
   bet actually receives).
 - **Kelly fraction:** `f* = (p·d − 1) / (d − 1)`, **clamped to ≥ 0**.
 
-When line shopping found no uplift (best-prices NULL → fallback → `d ≈ 1/p`), `p·d ≈ 1` → `f* ≈ 0`
-→ **stake 0**. This is the honest, intended behaviour: stake only where a real price advantage
-exists. (Consequence: with SGO's quota currently out and all best-prices NULL, every stake is 0
-until best-prices populate — see the Dependency section.)
+The edge `p·d − 1` is the true expected value of the bet *at the price it is actually booked* (`d`).
+It is meaningfully positive mainly where line shopping lifts `d` above the consensus fair price. It is
+**~0 on most consensus-priced cards** but — validated on the live 2026-08-07 slate — **not exactly 0**:
+`market_prob` (the two-sided devig consensus) and the stored consensus price don't perfectly agree, so
+`p·d − 1` can be slightly positive or negative even with no shopping (e.g. a −500 leg whose devig
+`market_prob` is 0.8603 > the 0.833 that price raw-implies). Kelly correctly sizes that small residual
+tiny, and clamps to 0 (stake 0) whenever `p·d ≤ 1` — which on the live slate zeroed **5 of 8** cards,
+several at a *negative* edge (heavy-favorite parlays that look "safe" at ~68% but are badly priced even
+after shopping). So the behaviour is "stake proportional to fair-prob × booked-price − 1," NOT "stake
+only where a book strictly beat consensus." Kelly actively distinguishing well-priced from badly-priced
+cards is the intended value; the narrower "shopping-gain-only" variant (f*=0 unless a book beat
+consensus) is a deliberately-rejected alternative (it would need the consensus combined odds stored
+separately and would ignore real EV from the devig-vs-price gap). (Consequence: while best-prices were
+NULL — SGO quota out 08-06/08-07 — every stake was 0; with a fresh key 08-07, the live slate stakes
+3/8 cards at ~0.35–0.43u, total 1.15u.)
 
 ## Unit convention (user-confirmed)
 
@@ -151,8 +162,10 @@ paper-only honesty notes.
 
 ## Dependency / current state
 
-Stakes are **0 everywhere until best-prices populate** (SGO free-tier quota exhausted 08-06/08-07;
-a fresh account key + MLB-only chain — commit `6e2eabe` — is the mitigation). The feature is correct
-and lands regardless; its visible P&L effect is gated on best-prices existing. Once the key is in,
-re-run `odds_ingest --sport mlb` → the stake pass → inspect real ¼-Kelly stakes to validate
-magnitudes on the live slate (per the "validate perf on real data" discipline).
+**RESOLVED 2026-08-07:** a fresh free SGO account key is in `.env`; best-prices now populate
+(1984/2355 prop_lines, 28/33 game_lines shopped, real books). Today's rebuilt slate was measured
+against the exact formula above: **3/8 cards stake (~0.35–0.43u), 5/8 stake 0, total 1.15u** — a
+concrete, non-degenerate distribution proving Kelly does real work on live prices. The MLB-only +
+resilient chain (commit `6e2eabe`) makes the fresh 2,500-object budget last. Re-validate magnitudes
+after the feature lands + the next chain runs the stake pass (per the "validate perf on real data"
+discipline).
