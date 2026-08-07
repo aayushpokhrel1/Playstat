@@ -87,7 +87,10 @@ export default function ConstructionList({
                 </span>
                 <span className={styles.legData}>
                   <span className={styles.legLine}>{leg.line}</span>
-                  <span>{formatOdds(leg.odds)}</span>
+                  <span>
+                    {formatOdds(leg.odds)}
+                    {leg.book ? ` · ${leg.book}` : ""}
+                  </span>
                   <span className={styles.legMarketProb}>{formatPercent(leg.market_prob)}</span>
                   <span className={styles.legModelProb}>
                     model: {leg.model_prob === null ? "—" : formatPercent(leg.model_prob)} (not

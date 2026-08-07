@@ -33,6 +33,9 @@ export type BuilderLeg = {
   odds: number;
   market_prob: number;
   model_prob: number | null;
+  // Best-price bookmaker for the shopped odds (line shopping, §15.9 item 3);
+  // null when unshopped (consensus price) or for legacy rows.
+  book: string | null;
   home_team: string | null;
   away_team: string | null;
   player_team_side: "home" | "away" | null;
