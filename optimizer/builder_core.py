@@ -49,7 +49,7 @@ def _clean_optional(value):
     return float(value)
 
 
-def _base_leg(game_id, side, market_prob, line_value, american_odds, model_prob, label):
+def _base_leg(game_id, side, market_prob, line_value, american_odds, model_prob, label, book=None):
     return {
         "game_id": int(game_id),
         "label": label,
@@ -59,15 +59,38 @@ def _base_leg(game_id, side, market_prob, line_value, american_odds, model_prob,
         "decimal_odds": american_to_decimal(int(american_odds)),
         "market_prob": float(market_prob),
         "model_prob": _clean_optional(model_prob),
+        "book": book,
     }
+
+
+# side -> (best-odds column, best-book column, consensus-odds column) for the
+# shopped payout price. market_prob is ALWAYS the consensus devig (ranking/floor
+# unchanged); only the payout price is shopped. A missing best_* (NULL / absent)
+# falls back to the consensus price for that side (README §15.9 item 3).
+_SHOP_COLS = {
+    "over":  ("best_over_odds",  "best_over_book",  "over_odds"),
+    "under": ("best_under_odds", "best_under_book", "under_odds"),
+    "home":  ("best_home_odds",  "best_home_book",  "home_odds"),
+    "away":  ("best_away_odds",  "best_away_book",  "away_odds"),
+}
+
+
+def shopped_odds(row, side):
+    """(american_odds, book) for the chosen side: the best single-book price when
+    present, else the consensus price (book None)."""
+    best_col, book_col, cons_col = _SHOP_COLS[side]
+    best = row.get(best_col)
+    if best is not None:
+        return int(best), row.get(book_col)
+    return int(row[cons_col]), None
 
 
 def normalize_player_leg(row):
     side, prob = favorite_side(row["over_odds"], row["under_odds"])
-    odds = row["over_odds"] if side == "over" else row["under_odds"]
+    odds, book = shopped_odds(row, side)
     label = f"{row.get('player_name', 'player')} {row['stat_type']} {side} {row['line_value']}"
     leg = _base_leg(row["game_id"], side, prob, row["line_value"], odds,
-                    row.get("model_prob"), label)
+                    row.get("model_prob"), label, book=book)
     leg.update({"kind": "player", "player_id": int(row["player_id"]),
                 "stat_type": row["stat_type"], "market": None})
     return leg
@@ -78,15 +101,15 @@ def normalize_team_leg(row):
     if is_home_away_market(market):
         raw, prob = favorite_side(row["home_odds"], row["away_odds"])   # "over"->home, "under"->away
         side = "home" if raw == "over" else "away"
-        odds = row["home_odds"] if side == "home" else row["away_odds"]
+        odds, book = shopped_odds(row, side)
         line = row.get("line_value")
         label = f"{market} {side}" if line is None else f"{market} {side} {line}"
     else:
         side, prob = favorite_side(row["over_odds"], row["under_odds"])
-        odds = row["over_odds"] if side == "over" else row["under_odds"]
+        odds, book = shopped_odds(row, side)
         line = row["line_value"]
         label = f"{market} {side} {line}"
-    leg = _base_leg(row["game_id"], side, prob, line, odds, row.get("model_prob"), label)
+    leg = _base_leg(row["game_id"], side, prob, line, odds, row.get("model_prob"), label, book=book)
     leg.update({"kind": "team", "player_id": None, "stat_type": None, "market": market})
     return leg
 

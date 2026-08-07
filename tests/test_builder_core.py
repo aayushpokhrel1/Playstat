@@ -384,3 +384,57 @@ def test_build_never_returns_two_legs_from_one_game():
     for r in build(legs, min_prob=0.0, max_legs=3, top_n=50):
         ids = [leg["game_id"] for leg in r["legs"]]
         assert len(set(ids)) == len(ids)
+
+
+def test_player_leg_uses_best_price_for_chosen_side_prob_stays_consensus():
+    # consensus -200/+170 -> favorite OVER, market_prob from consensus devig.
+    # best over price is -150 at fanduel -> payout uses -150, prob unchanged.
+    consensus = normalize_player_leg({
+        "game_id": 1, "player_id": 9, "stat_type": "hits", "line_value": 0.5,
+        "player_name": "P", "over_odds": -200, "under_odds": 170,
+        "best_over_odds": None, "best_over_book": None,
+        "best_under_odds": None, "best_under_book": None, "model_prob": None,
+    })
+    shopped = normalize_player_leg({
+        "game_id": 1, "player_id": 9, "stat_type": "hits", "line_value": 0.5,
+        "player_name": "P", "over_odds": -200, "under_odds": 170,
+        "best_over_odds": -150, "best_over_book": "fanduel",
+        "best_under_odds": None, "best_under_book": None, "model_prob": None,
+    })
+    assert shopped["side"] == "over" == consensus["side"]
+    assert shopped["market_prob"] == consensus["market_prob"]        # ranking unchanged
+    assert shopped["american_odds"] == -150 and shopped["book"] == "fanduel"
+    assert shopped["decimal_odds"] > consensus["decimal_odds"]       # bigger payout
+    assert consensus["book"] is None                                 # fallback
+
+
+def test_player_leg_falls_back_to_consensus_when_no_best_for_chosen_side():
+    # favorite is UNDER (+? ); only best_over present -> under uses consensus.
+    leg = normalize_player_leg({
+        "game_id": 2, "player_id": 3, "stat_type": "hits", "line_value": 0.5,
+        "player_name": "Q", "over_odds": 170, "under_odds": -200,
+        "best_over_odds": -150, "best_over_book": "dk",   # wrong side, ignored
+        "best_under_odds": None, "best_under_book": None, "model_prob": None,
+    })
+    assert leg["side"] == "under" and leg["american_odds"] == -200 and leg["book"] is None
+
+
+def test_team_ou_leg_uses_best_price():
+    leg = normalize_team_leg({
+        "game_id": 4, "market": "first_inning_runs", "line_value": 0.5,
+        "over_odds": None, "under_odds": None, "home_odds": None, "away_odds": None,
+        # NRFI is under-favored here:
+        "over_odds": 150, "under_odds": -180,
+        "best_over_odds": None, "best_over_book": None,
+        "best_under_odds": -160, "best_under_book": "betmgm", "model_prob": None,
+    })
+    assert leg["side"] == "under" and leg["american_odds"] == -160 and leg["book"] == "betmgm"
+
+
+def test_team_homeaway_leg_has_book_none_in_v1():
+    leg = normalize_team_leg({
+        "game_id": 5, "market": "full_game_moneyline", "line_value": None,
+        "over_odds": None, "under_odds": None, "home_odds": -250, "away_odds": 200,
+        "model_prob": None,
+    })
+    assert leg["side"] == "home" and leg["american_odds"] == -250 and leg["book"] is None
