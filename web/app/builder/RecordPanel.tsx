@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import type { BuilderRecord, BuilderRecordDaily } from "../lib/api";
+import type {
+  BuilderRecord,
+  BuilderRecordDaily,
+  DailyParlay,
+  DailyParlayLeg,
+} from "../lib/api";
 import styles from "./builder.module.css";
 
 const TIER_LABELS: Record<BuilderRecord["tier"], string> = {
@@ -33,12 +38,105 @@ function tierTargetLabel(row: BuilderRecord): string {
   return `${TIER_LABELS[row.tier] ?? row.tier} ${row.target_payout.toFixed(1)}x`;
 }
 
+// Per-leg settlement outcome as a monochrome glyph — no signal-green (reserved
+// for the ≥75% joint-prob rule); the ✓/✗/– shapes carry the meaning.
+function resultGlyph(result: string | null): string {
+  if (result === "hit" || result === "won") return "✓";
+  if (result === "miss" || result === "lost") return "✗";
+  if (result === "void") return "–";
+  return "·"; // pending / unknown
+}
+
+function LegRow({ leg }: { leg: DailyParlayLeg }) {
+  const actual = leg.actual === null ? "—" : leg.actual;
+  const line = leg.line === null ? "—" : leg.line;
+  return (
+    <div className={styles.legRow}>
+      <span className={styles.legGlyph} aria-hidden="true">
+        {resultGlyph(leg.result)}
+      </span>
+      <span className={styles.legLabel}>{leg.label ?? "—"}</span>
+      <span className={styles.recordMeta}>
+        {actual} / {line}
+      </span>
+    </div>
+  );
+}
+
+function ParlayRow({ parlay }: { parlay: DailyParlay }) {
+  const [open, setOpen] = useState(false);
+  const panelId = `parlay-${parlay.parlay_id}`;
+  return (
+    <div className={styles.parlayRow}>
+      <button
+        type="button"
+        className={styles.parlayToggle}
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className={styles.parlayResult}>{parlay.result.toUpperCase()}</span>
+        <span className={styles.recordLabel}>
+          {TIER_LABELS[parlay.tier] ?? parlay.tier} {parlay.target_payout.toFixed(1)}x
+        </span>
+        <span className={styles.recordFigure}>{formatUnits(parlay.pnl)}</span>
+        <span className={styles.recordMeta}>
+          {parlay.stake.toFixed(2)}u @ {parlay.combined_odds.toFixed(2)}x
+        </span>
+      </button>
+      {open && (
+        <div id={panelId} className={styles.legList}>
+          {parlay.legs.map((leg, i) => (
+            <LegRow key={i} leg={leg} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DayRow({ day, parlays }: { day: BuilderRecordDaily; parlays: DailyParlay[] }) {
+  const [open, setOpen] = useState(false);
+  const panelId = `day-${day.date}`;
+  const hasParlays = parlays.length > 0;
+  return (
+    <div className={styles.dailyRow}>
+      <button
+        type="button"
+        className={styles.dayToggle}
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((v) => !v)}
+        disabled={!hasParlays}
+      >
+        <span className={styles.recordLabel}>{day.date}</span>
+        <span className={styles.recordFigure}>
+          {day.wins}-{day.losses}-{day.pushes}
+        </span>
+        <span className={styles.recordFigure}>{formatUnits(day.pnl)}</span>
+        <span className={styles.recordFigure}>{formatRoi(day.roi)}</span>
+        <span className={styles.recordMeta}>
+          n={day.n} · {formatStaked(day.staked)}
+        </span>
+      </button>
+      {open && hasParlays && (
+        <div id={panelId} className={styles.parlayGroup}>
+          {parlays.map((parlay) => (
+            <ParlayRow key={parlay.parlay_id} parlay={parlay} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type RecordPanelProps = {
   rows: BuilderRecord[];
   daily: BuilderRecordDaily[];
+  parlaysByDate: Record<string, DailyParlay[]>;
 };
 
-export default function RecordPanel({ rows, daily }: RecordPanelProps) {
+export default function RecordPanel({ rows, daily, parlaysByDate }: RecordPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const hasBuilderRecord = rows.length > 0;
   const hasTeamRows = rows.some((row) => row.tier === "team");
@@ -100,20 +198,12 @@ export default function RecordPanel({ rows, daily }: RecordPanelProps) {
           <p className={styles.dailyCaption}>
             Early slate dates are small samples — a handful of settled parlays can swing
             W-L-P and ROI a lot day to day (README §15 calibration note). Read these as
-            noisy until the sample builds up.
+            noisy until the sample builds up. Expand a day to see each parlay, and a
+            parlay to see which leg landed (✓) or missed (✗).
           </p>
           <div className={styles.dailyList}>
             {daily.map((day) => (
-              <div key={day.date} className={styles.dailyRow}>
-                <span className={styles.recordLabel}>{day.date}</span>
-                <span className={styles.recordFigure}>
-                  {day.wins}-{day.losses}-{day.pushes}
-                </span>
-                <span className={styles.recordFigure}>{formatUnits(day.pnl)}</span>
-                <span className={styles.recordFigure}>{formatRoi(day.roi)}</span>
-                <span className={styles.recordMeta}>n={day.n}</span>
-                <span className={styles.recordMeta}>{formatStaked(day.staked)}</span>
-              </div>
+              <DayRow key={day.date} day={day} parlays={parlaysByDate[day.date] ?? []} />
             ))}
           </div>
         </div>

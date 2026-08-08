@@ -1,5 +1,11 @@
 import Link from "next/link";
-import { getBuilderRecord, getBuilderRecordDaily, getSavedBuilderParlays } from "../lib/api";
+import {
+  getBuilderRecord,
+  getBuilderRecordDaily,
+  getDailyParlays,
+  getSavedBuilderParlays,
+  type DailyParlay,
+} from "../lib/api";
 import BuilderControls from "./BuilderControls";
 import ConstructionList from "./ConstructionList";
 import RecordPanel from "./RecordPanel";
@@ -113,6 +119,7 @@ export default async function BuilderPage({
   let tier2Saved;
   let builderRecord;
   let builderRecordDaily;
+  let parlaysByDate: Record<string, DailyParlay[]> = {};
   let fetchError: string | null = null;
 
   try {
@@ -122,6 +129,12 @@ export default async function BuilderPage({
       getBuilderRecord(sport),
       getBuilderRecordDaily(sport),
     ]);
+    // Per-day parlay drill-down. apiGet is server-only, so the client RecordPanel
+    // can't lazy-fetch — fetch here and pass a date->parlays map as props. Bounded
+    // to the most recent slate days to cap the fan-out as history grows.
+    const drillDays = (builderRecordDaily ?? []).slice(0, 45);
+    const lists = await Promise.all(drillDays.map((d) => getDailyParlays(d.date, sport)));
+    parlaysByDate = Object.fromEntries(drillDays.map((d, i) => [d.date, lists[i]]));
   } catch {
     fetchError = "Can't reach the Playstat API at localhost:8000. Make sure the service is running.";
   }
@@ -189,7 +202,11 @@ export default async function BuilderPage({
         ) : (
           <>
             <section className={styles.section} aria-label="Betting record (paper)">
-              <RecordPanel rows={builderRecord ?? []} daily={builderRecordDaily ?? []} />
+              <RecordPanel
+                rows={builderRecord ?? []}
+                daily={builderRecordDaily ?? []}
+                parlaysByDate={parlaysByDate}
+              />
             </section>
 
             <section className={styles.section} aria-label="How to read this">

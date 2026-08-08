@@ -261,6 +261,88 @@
   padding-top: var(--space-xs);
 }
 
+/* Per-day -> parlay -> leg drill-down (record autopsy) */
+
+.dayToggle,
+.parlayToggle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.dayToggle:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.dayToggle:focus-visible,
+.parlayToggle:focus-visible {
+  outline: 1px solid var(--signal-green);
+  outline-offset: 2px;
+}
+
+.parlayGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  padding-left: var(--space-md);
+  border-left: 1px solid var(--border);
+}
+
+.parlayRow {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-xs) 0;
+}
+
+.parlayResult {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  min-width: 5ch;
+}
+
+.legList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  padding-left: var(--space-md);
+  border-left: 1px solid var(--border);
+}
+
+.legRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.legGlyph {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--ink);
+  min-width: 1.5ch;
+  text-align: center;
+}
+
+.legLabel {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 0.75rem;
+  color: var(--ink);
+}
+
 /* Framing copy */
 
 .framing {
