@@ -479,3 +479,23 @@ def test_normalize_moneyline_nan_line_coerced_to_none():
     assert df["line_value"].isna().iloc[0]  # real NaN in a float column
     legs = {l["market"]: l for l in builder._normalize(df, normalize_team_leg, floor=0.0)}
     assert legs["full_game_moneyline"]["line_value"] is None
+
+
+def test_save_builds_writes_lift_metadata_for_same_game():
+    engine = _CapturingEngine()
+    results = _one_result("team")
+    results[0].update({"lift": 1.30, "lift_n": 2100, "both_n": 1000, "small_sample": False})
+    builder.save_builds(engine, 0.0, results, parlay_class="same_game_pair", sport="mlb")
+    blob = json.loads(engine.calls[0]["legs"])
+    assert blob["class"] == "same_game_pair"
+    assert blob["lift"] == 1.30 and blob["lift_n"] == 2100
+    assert blob["both_n"] == 1000 and blob["small_sample"] is False
+    assert len(blob["legs"]) == 1  # _one_result yields a single-leg construction
+
+
+def test_save_builds_omits_lift_keys_for_normal_classes():
+    engine = _CapturingEngine()
+    builder.save_builds(engine, 1.4, _one_result("player"))
+    blob = json.loads(engine.calls[0]["legs"])
+    assert "lift" not in blob and "small_sample" not in blob
+    assert set(blob.keys()) == {"class", "sport", "legs"}

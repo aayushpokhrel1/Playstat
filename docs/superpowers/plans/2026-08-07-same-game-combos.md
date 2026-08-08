@@ -374,7 +374,7 @@ def test_save_builds_writes_lift_metadata_for_same_game():
     assert blob["class"] == "same_game_pair"
     assert blob["lift"] == 1.30 and blob["lift_n"] == 2100
     assert blob["both_n"] == 1000 and blob["small_sample"] is False
-    assert len(blob["legs"]) == 2
+    assert len(blob["legs"]) == 1  # _one_result yields a single-leg construction
 
 
 def test_save_builds_omits_lift_keys_for_normal_classes():

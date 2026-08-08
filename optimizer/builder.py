@@ -239,6 +239,14 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
             if sig in seen:
                 continue
             seen.add(sig)
+            wrapper = {"class": parlay_class, "sport": sport}
+            # Same-game cards (README §15.9 item 1) carry correlation metadata at
+            # the wrapper level — it's a property of the pair, not a leg. Absent on
+            # every other class, so their persisted shape is byte-unchanged.
+            for k in ("lift", "lift_n", "both_n", "small_sample"):
+                if k in r:
+                    wrapper[k] = r[k]
+            wrapper["legs"] = legs_json
             conn.execute(
                 text(
                     """
@@ -251,8 +259,7 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
                     "tp": target_payout,
                     # allow_nan=False: emit a loud Python error rather than bare
                     # NaN, which is invalid JSON and Postgres rejects downstream.
-                    "legs": json.dumps({"class": parlay_class, "sport": sport,
-                                        "legs": legs_json}, allow_nan=False),
+                    "legs": json.dumps(wrapper, allow_nan=False),
                     "jp": r["joint_prob"],
                     "co": r["combined_odds"],
                 },
