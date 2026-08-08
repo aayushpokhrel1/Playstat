@@ -47,7 +47,7 @@ def test_load_legs_threads_slate_date_through_to_both_loaders():
     # test_load_legs_threads_sport_to_both_loaders below); NFL chain #4a adds a
     # further trailing `window_days` param — updated here to match, same intent:
     # slate_date is still passed positionally to both.
-    assert "load_player_legs(engine, floor, slate_date, sport, window_days)" in source
+    assert "load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate)" in source
     assert "load_team_legs(engine, floor, slate_date, sport, window_days)" in source
 
 
@@ -205,7 +205,7 @@ def test_load_legs_threads_sport_to_both_loaders():
     sig = inspect.signature(builder.load_legs)
     assert sig.parameters["sport"].default == "mlb"
     source = inspect.getsource(builder.load_legs)
-    assert "load_player_legs(engine, floor, slate_date, sport, window_days)" in source
+    assert "load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate)" in source
     assert "load_team_legs(engine, floor, slate_date, sport, window_days)" in source
 
 
@@ -298,7 +298,7 @@ def test_main_has_sport_flag_defaulting_to_mlb_and_threads_it():
     assert 'default="mlb"' in source
     # threaded into loading and saving
     assert "args.sport" in source
-    assert "load_legs(engine, args.floor, args.slate_date, args.sport, window_days)" in source
+    assert "load_legs(engine, args.floor, args.slate_date, args.sport, window_days," in source
     assert "load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)" in source
     assert ", args.sport)" in source  # save_builds call carries sport last
 
@@ -339,7 +339,7 @@ def test_main_resolves_window_days_from_sport(monkeypatch):
     captured = {}
     monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
     monkeypatch.setattr("optimizer.builder.load_legs",
-                        lambda engine, floor, slate_date, sport, window_days: captured.update(window_days=window_days) or [{"x": 1}])
+                        lambda engine, floor, slate_date, sport, window_days, min_start_rate=0.0: captured.update(window_days=window_days) or [{"x": 1}])
     monkeypatch.setattr("optimizer.builder.build", _fake_build_with_stats)
     monkeypatch.setattr("sys.argv", ["builder", "--target-payout", "1.4", "--sport", "nfl"])
     from optimizer.builder import main
@@ -351,7 +351,7 @@ def test_main_window_days_flag_overrides_sport_default(monkeypatch):
     captured = {}
     monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
     monkeypatch.setattr("optimizer.builder.load_legs",
-                        lambda engine, floor, slate_date, sport, window_days: captured.update(window_days=window_days) or [{"x": 1}])
+                        lambda engine, floor, slate_date, sport, window_days, min_start_rate=0.0: captured.update(window_days=window_days) or [{"x": 1}])
     monkeypatch.setattr("optimizer.builder.build", _fake_build_with_stats)
     monkeypatch.setattr("sys.argv", ["builder", "--target-payout", "1.4", "--sport", "nfl", "--window-days", "0"])
     from optimizer.builder import main
@@ -536,3 +536,71 @@ def test_same_game_lift_fn_caches_per_side_line_combo():
     finally:
         builder.nrfi_f5_lift = original
     assert len(calls) == 2
+
+
+# --- start-probability filter (README §15.9 item 11) --------------------------
+# The chain builds ~08:39 ET, before MLB lineups post, so 18.3% of legs voided on
+# players who were rested/scratched. These lock the pure filter's contract.
+
+def _pleg(player_id, prob=0.9):
+    return {"kind": "player", "player_id": player_id, "game_id": 1,
+            "stat_type": "home_runs", "market": None, "side": "under",
+            "market_prob": prob, "line_value": 0.5, "american_odds": -300,
+            "decimal_odds": 1.33, "label": "x", "book": None}
+
+
+def _tmleg(game_id=1):
+    return {"kind": "team", "player_id": None, "game_id": game_id,
+            "stat_type": None, "market": "first_inning_runs", "side": "under",
+            "market_prob": 0.56, "line_value": 0.5, "american_odds": -130,
+            "decimal_odds": 1.77, "label": "nrfi", "book": None}
+
+
+def test_filter_by_start_rate_drops_infrequent_players():
+    legs = [_pleg(1), _pleg(2), _pleg(3)]
+    rates = {1: 0.90, 2: 0.40, 3: 0.65}
+    kept = builder.filter_by_start_rate(legs, rates, 0.65)
+    assert [l["player_id"] for l in kept] == [1, 3]  # 0.65 is inclusive
+
+
+def test_filter_by_start_rate_never_drops_team_legs():
+    legs = [_tmleg(1), _pleg(2)]
+    kept = builder.filter_by_start_rate(legs, {2: 0.10}, 0.65)
+    assert len(kept) == 1 and kept[0]["kind"] == "team"
+
+
+def test_filter_by_start_rate_keeps_players_with_no_measurable_history():
+    """An ABSENT rate means 'their team had no finished games in the window', not
+    'never plays'. Dropping those would empty the pool on an early-season slate."""
+    legs = [_pleg(7)]
+    assert builder.filter_by_start_rate(legs, {}, 0.65) == legs
+
+
+def test_filter_by_start_rate_zero_threshold_is_a_no_op():
+    legs = [_pleg(1), _pleg(2), _tmleg()]
+    assert builder.filter_by_start_rate(legs, {1: 0.0, 2: 0.0}, 0.0) == legs
+
+
+def test_filter_by_start_rate_drops_explicit_zero_rate():
+    """A player whose team played but who never appeared reads 0.0 -> dropped."""
+    assert builder.filter_by_start_rate([_pleg(5)], {5: 0.0}, 0.65) == []
+
+
+def test_load_start_rates_normalises_by_team_games_not_calendar_days():
+    """The denominator must be the player's TEAM's games in the window — a
+    calendar-day denominator understates everyone (teams play ~6 games/7 days)."""
+    source = inspect.getsource(builder.load_start_rates)
+    assert "team_games" in source and "player_apps" in source
+    assert "COALESCE(pa.n, 0)::float / tg.n" in source
+    assert "status = 'FT'" in source          # only finished games count
+    assert "tg.n > 0" in source               # no divide-by-zero
+
+
+def test_load_player_legs_accepts_min_start_rate_defaulting_to_off():
+    sig = inspect.signature(builder.load_player_legs)
+    assert sig.parameters["min_start_rate"].default == 0.0
+    assert inspect.signature(builder.load_legs).parameters["min_start_rate"].default == 0.0
+
+
+def test_main_exposes_min_start_rate_flag():
+    assert "--min-start-rate" in inspect.getsource(builder.main)

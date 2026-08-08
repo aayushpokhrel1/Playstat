@@ -44,7 +44,90 @@ def _team_class(sport):
     return "game_tier" if sport in ("nfl", "nba", "mls", "ucl", "nhl") else "team_tier"
 
 
-def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
+# Lookback for the start-probability filter (README §15.9 item 11 / item 9d).
+# 21 days ≈ 18 team games — long enough to separate an everyday starter from a
+# bench/platoon bat, short enough to track a recent role change.
+START_RATE_WINDOW_DAYS = 21
+
+
+def load_start_rates(engine, slate_date=None, sport="mlb", window_days=START_RATE_WINDOW_DAYS):
+    """{player_id: start_rate} over the prior `window_days`, where start_rate is
+    the player's appearances divided by THEIR TEAM'S finished games in the window.
+
+    Normalising by team games (not calendar days) is what makes the number
+    interpretable: teams play ~6 games a week, so a calendar-day denominator
+    understates every player and an everyday starter reads ~0.85 instead of ~1.0.
+
+    Only players whose team actually played in the window get a rate. A player
+    with team games but zero appearances correctly reads 0.0 (bench/injured);
+    a player whose team has NO finished games in the window is absent from the
+    map entirely, and callers must treat that as "unknown — do not filter", so
+    an early-season or data-gap slate can't silently empty the candidate pool.
+    """
+    with engine.begin() as conn:
+        df = pd.read_sql(
+            text(
+                """
+                WITH window_games AS (
+                    SELECT game_id, home_team_id, away_team_id
+                    FROM games
+                    WHERE sport = :sport AND status = 'FT'
+                      AND date BETWEEN COALESCE(:slate_date, CURRENT_DATE) - :win
+                                   AND COALESCE(:slate_date, CURRENT_DATE) - 1
+                ),
+                team_games AS (
+                    SELECT team_id, COUNT(*) AS n FROM (
+                        SELECT game_id, home_team_id AS team_id FROM window_games
+                        UNION ALL
+                        SELECT game_id, away_team_id AS team_id FROM window_games
+                    ) s GROUP BY team_id
+                ),
+                player_apps AS (
+                    SELECT pgs.player_id, COUNT(DISTINCT pgs.game_id) AS n
+                    FROM player_game_stats pgs
+                    JOIN window_games wg ON wg.game_id = pgs.game_id
+                    GROUP BY pgs.player_id
+                )
+                SELECT p.player_id,
+                       COALESCE(pa.n, 0)::float / tg.n AS start_rate
+                FROM players p
+                JOIN team_games tg ON tg.team_id = p.team_id
+                LEFT JOIN player_apps pa ON pa.player_id = p.player_id
+                WHERE tg.n > 0
+                """
+            ),
+            conn, params={"slate_date": slate_date, "sport": sport,
+                          "win": window_days},
+        )
+    if df.empty:
+        return {}
+    return {int(r.player_id): float(r.start_rate) for r in df.itertuples()}
+
+
+def filter_by_start_rate(legs, start_rates, min_start_rate):
+    """Drop player legs whose player rarely appears (README §15.9 item 11).
+
+    Pure. Team legs are never filtered (a game always happens). A player MISSING
+    from start_rates is kept — an absent rate means "can't judge" (their team had
+    no finished games in the window), not "never plays"; dropping those would
+    empty the pool on an early-season or backfill-gap slate.
+
+    Why this exists: the chain builds ~08:39 ET, hours before MLB lineups post,
+    so 18.3% of legs voided on players who were then rested/scratched — 34.9% of
+    cards lost a leg and 22.9% degraded to <=1 graded leg (README §15.9 item 9d).
+    """
+    if not min_start_rate:
+        return legs
+    return [
+        leg for leg in legs
+        if leg["kind"] != "player"
+        or start_rates.get(leg["player_id"], None) is None
+        or start_rates[leg["player_id"]] >= min_start_rate
+    ]
+
+
+def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0,
+                     min_start_rate=0.0):
     """Latest two-sided player prop lines on TODAY'S slate (unfinished games).
 
     model_prob is now ALWAYS None: the `edges` table it came from was dropped
@@ -90,7 +173,12 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
             ),
             conn, params={"slate_date": slate_date, "sport": sport, "window_days": window_days},
         )
-    return _normalize(df, normalize_player_leg, floor)
+    legs = _normalize(df, normalize_player_leg, floor)
+    # Start-probability filter (README §15.9 item 11). Default 0.0 = OFF, so the
+    # library default stays byte-identical; the chain/CLI opt in explicitly.
+    if min_start_rate:
+        legs = filter_by_start_rate(legs, load_start_rates(engine, slate_date, sport), min_start_rate)
+    return legs
 
 
 def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
@@ -161,8 +249,9 @@ def _normalize(df, normalizer, floor):
     return [leg for leg in legs if passes_floor(leg, floor)]
 
 
-def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
-    return (load_player_legs(engine, floor, slate_date, sport, window_days)
+def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0,
+              min_start_rate=0.0):
+    return (load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate)
             + load_team_legs(engine, floor, slate_date, sport, window_days))
 
 
@@ -351,6 +440,13 @@ def main():
                         help="build from team-market (NRFI/F5) legs only — a dedicated, "
                              "higher-variance team tier (README §15.9 item 5). --save "
                              "writes class=\"team_tier\" instead of \"across_game\".")
+    parser.add_argument("--min-start-rate", type=float, default=0.0,
+                        help="drop player legs whose player appeared in fewer than "
+                             "this fraction of their team's games over the last 21 days "
+                             "(README §15.9 item 11). The chain builds hours before "
+                             "lineups post, so rarely-used players void ~1 leg in 5. "
+                             "0.0 = off (default); the daily chain passes 0.65. Team "
+                             "legs and players with no measurable history are kept.")
     parser.add_argument("--same-game", action="store_true",
                         help="build the same-game NRFI+F5 combos class (README "
                              "§15.9 item 1): one lift-adjusted card per game that "
@@ -383,7 +479,8 @@ def main():
     if args.team_only:
         legs = load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)
     else:
-        legs = load_legs(engine, args.floor, args.slate_date, args.sport, window_days)
+        legs = load_legs(engine, args.floor, args.slate_date, args.sport, window_days,
+                         args.min_start_rate)
     print(f"candidate legs (favorite side, market prob >= {args.floor:.0%}): {len(legs)}")
     if not legs:
         print("no candidate legs — nothing to build.")
