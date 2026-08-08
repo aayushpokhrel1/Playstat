@@ -298,3 +298,30 @@ class DailyParlayOut(BaseModel):
     stake: float
     pnl: float
     legs: list[DailyParlayLegOut]
+
+
+class LineMovementLegOut(BaseModel):
+    player_id: int | None = None
+    game_id: int | None = None
+    stat_type: str | None = None
+    side: str | None = None
+    line: float
+    build_prob: float
+    close_prob: float
+    movement_pp: float
+
+
+class LineMovementOut(BaseModel):
+    """Line movement between a card's build price and its last pre-start price.
+
+    NOT the closing line and NOT an edge/value claim (README §15.8 #2): the last
+    snapshot lands a median ~100 min before first pitch. `coverage` is the share
+    of legs comparable at an UNCHANGED line — a low value is itself the finding.
+    """
+    n_legs: int
+    n_compared: int
+    coverage: float
+    mean_movement_pp: float | None = None
+    n_toward: int = 0
+    n_against: int = 0
+    legs: list[LineMovementLegOut] = []

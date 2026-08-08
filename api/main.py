@@ -19,6 +19,8 @@ from api.schemas import (
     DailyParlayOut,
     GameLogEntry,
     GameOut,
+    LineMovementLegOut,
+    LineMovementOut,
     PlayerOut,
     SavedBuilderParlayOut,
     TeamOut,
@@ -26,6 +28,7 @@ from api.schemas import (
 from ingestion.db import get_engine
 from modeling import settle
 from optimizer import builder, builder_core
+from optimizer.line_movement import summarize_movement
 
 app = FastAPI(title="Playstat API", dependencies=[Depends(require_api_key)])
 
@@ -557,6 +560,114 @@ def builder_record(sport: str = "mlb"):
             """
         ), {"sport": sport}).fetchall()
     return _shape_builder_record(rows)
+
+
+def _shape_line_movement(saved_rows, close_rows):
+    """Pure: saved_rows are (parlay_id, slate_date, legs_wrapper) and close_rows
+    maps (player_id, game_id, stat_type) -> the last pre-start line row. DB-free
+    and unit-testable without a database, mirroring _shape_builder_record.
+
+    Team legs have no player_id and are keyed (None, game_id, market); they are
+    looked up the same way and simply miss when absent, lowering coverage.
+    """
+    pairs = []
+    for _parlay_id, _slate_date, built_at, wrapper in saved_rows:
+        for leg in (wrapper or {}).get("legs", []):
+            key = (leg.get("player_id"), leg.get("game_id"),
+                   leg.get("stat_type") or leg.get("market"))
+            close = close_rows.get(key)
+            # A close row only counts if it was pulled STRICTLY LATER than the
+            # card was built. Without this the newest row is often the very pull
+            # the card was built from, which compares a price to itself and
+            # reports movement 0.0 at "100% coverage" — falsely implying we had
+            # measured something. Verified 2026-08-08: one pull/day, so 412 of
+            # 454 legs were self-comparisons. Coverage must reflect what was
+            # actually measured, so a same-pull row is dropped (README §15.8 #2).
+            if close is not None and built_at is not None:
+                pulled_at = close.get("pulled_at")
+                if pulled_at is None or pulled_at <= built_at:
+                    close = None
+            pairs.append((leg, close))
+
+    summary = summarize_movement(pairs)
+    return LineMovementOut(
+        n_legs=summary["n_legs"],
+        n_compared=summary["n_compared"],
+        coverage=summary["coverage"],
+        mean_movement_pp=summary["mean_movement_pp"],
+        n_toward=summary["n_toward"],
+        n_against=summary["n_against"],
+        legs=[LineMovementLegOut(**leg) for leg in summary["legs"]],
+    )
+
+
+@app.get("/parlay-builder/line-movement", response_model=LineMovementOut)
+def builder_line_movement(sport: str = "mlb", days: int = 14):
+    """Line movement from build price to last pre-start price (README §15.9 item 12).
+
+    Dashboard-only and ADDITIVE — /parlay-builder/saved, /box-scores and /games
+    are untouched (Budgerr contract, §7.1). NOT a closing line and NOT an edge
+    claim: see LineMovementOut's docstring.
+    """
+    with engine.begin() as conn:
+        saved_rows = conn.execute(text(
+            """
+            SELECT pr.parlay_id, pr.created_at::date, pr.created_at, pr.legs
+            FROM parlay_recommendations pr
+            WHERE pr.kind = 'builder'
+              AND COALESCE(pr.legs->>'sport', 'mlb') = :sport
+              AND pr.created_at::date >= CURRENT_DATE - :days
+            ORDER BY pr.created_at DESC
+            """
+        ), {"sport": sport, "days": days}).fetchall()
+
+        # The last snapshot per (player, game, stat). With --not-before-now on the
+        # late pulls, a game only appears in pulls preceding its first pitch, so
+        # its newest row IS its last pre-start price. Raw odds are returned and
+        # de-vigged in Python by close_prob_for_side, because the correct side
+        # is known only from the saved leg.
+        #
+        # BOUNDED BY :days like saved_rows above. Unbounded, this DISTINCT ON
+        # scanned the whole table — measured 44,842 rows / 0.93s on 2026-08-08
+        # against 67.6k prop_lines, and prop_lines grows ~2.4k rows every day, so
+        # the cost would climb without limit. Cards older than :days aren't
+        # returned anyway, and a card's close snapshot is pulled the same day it
+        # was built, so nothing comparable is lost.
+        close_rows = {
+            (r[0], r[1], r[2]): {"line_value": r[3],
+                                 "over_odds": r[4], "under_odds": r[5],
+                                 "pulled_at": r[6]}
+            for r in conn.execute(text(
+                """
+                SELECT DISTINCT ON (player_id, game_id, stat_type)
+                    player_id, game_id, stat_type, line_value, over_odds, under_odds,
+                    pulled_at
+                FROM prop_lines
+                WHERE pulled_at >= CURRENT_DATE - :days
+                ORDER BY player_id, game_id, stat_type, pulled_at DESC
+                """
+            ), {"days": days}).fetchall()
+        }
+        # Team legs: keyed (None, game_id, market) to match the saved leg's shape,
+        # which has player_id=None and stat_type=None but carries `market`.
+        close_rows.update({
+            (None, r[0], r[1]): {"line_value": r[2],
+                                 "over_odds": r[3], "under_odds": r[4],
+                                 "home_odds": r[5], "away_odds": r[6],
+                                 "pulled_at": r[7]}
+            for r in conn.execute(text(
+                """
+                SELECT DISTINCT ON (game_id, market)
+                    game_id, market, line_value, over_odds, under_odds,
+                    home_odds, away_odds, pulled_at
+                FROM game_lines
+                WHERE pulled_at >= CURRENT_DATE - :days
+                ORDER BY game_id, market, pulled_at DESC
+                """
+            ), {"days": days}).fetchall()
+        })
+
+    return _shape_line_movement(saved_rows, close_rows)
 
 
 def _shape_builder_record_daily(rows):
