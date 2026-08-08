@@ -305,7 +305,8 @@ class LineMovementLegOut(BaseModel):
     game_id: int | None = None
     stat_type: str | None = None
     side: str | None = None
-    line: float
+    # Nullable: home/away markets (moneyline) carry no line.
+    line: float | None = None
     build_prob: float
     close_prob: float
     movement_pp: float

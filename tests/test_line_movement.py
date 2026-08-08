@@ -100,3 +100,33 @@ def test_leg_movement_excludes_a_raw_one_sided_row():
     build = _build(prob=0.50, line=0.5, side="under")
     assert leg_movement(build, {"line_value": 0.5, "over_odds": -120,
                                 "under_odds": None}) is None
+
+
+# --- nullable line_value (moneyline) ----------------------------------------
+# Home/away markets carry NO line. float(None) raised TypeError and 500'd the
+# live endpoint the first time a real moneyline leg appeared (2026-08-08).
+
+def _ml(prob=0.60, side="home"):
+    return {"market_prob": prob, "line": None, "side": side,
+            "player_id": None, "game_id": 10, "stat_type": "full_game_moneyline"}
+
+
+def test_both_lines_none_is_comparable_not_a_crash():
+    out = leg_movement(_ml(prob=0.60), {"market_prob": 0.65, "line_value": None})
+    assert out is not None
+    assert out["line"] is None
+    assert out["movement_pp"] == pytest.approx(5.0)
+
+
+def test_build_line_none_but_close_line_present_is_excluded():
+    assert leg_movement(_ml(), {"market_prob": 0.65, "line_value": 0.5}) is None
+
+
+def test_build_line_present_but_close_line_none_is_excluded():
+    assert leg_movement(_build(line=0.5), {"market_prob": 0.65, "line_value": None}) is None
+
+
+def test_moneyline_raw_row_devigs_without_a_line():
+    out = leg_movement(_ml(prob=0.60, side="home"),
+                       {"line_value": None, "home_odds": -200, "away_odds": 170})
+    assert out["close_prob"] == pytest.approx(0.642857, abs=1e-4)

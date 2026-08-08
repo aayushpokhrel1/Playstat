@@ -62,7 +62,15 @@ def leg_movement(build_leg, close_row):
     """
     if not close_row or build_leg.get("market_prob") is None:
         return None
-    if float(close_row["line_value"]) != float(build_leg["line"]):
+    # line_value is NULLABLE: home/away markets (moneyline) legitimately carry no
+    # line, so both sides can be None. Both-None means "no line on either" and is
+    # comparable; exactly one None means the market changed shape and is not.
+    # Guarding with float() alone raised TypeError and 500'd the endpoint the
+    # first time a real moneyline leg appeared (caught live 2026-08-08).
+    build_line, close_line = build_leg.get("line"), close_row.get("line_value")
+    if (build_line is None) != (close_line is None):
+        return None
+    if build_line is not None and float(close_line) != float(build_line):
         return None
     # Accept either a pre-computed market_prob (unit tests, callers that already
     # de-vigged) or a raw odds row, which we de-vig for the side we actually took.
@@ -77,7 +85,7 @@ def leg_movement(build_leg, close_row):
         "game_id": build_leg.get("game_id"),
         "stat_type": build_leg.get("stat_type"),
         "side": build_leg.get("side"),
-        "line": float(build_leg["line"]),
+        "line": float(build_line) if build_line is not None else None,
         "build_prob": float(build_leg["market_prob"]),
         "close_prob": float(close_row["market_prob"]),
         "movement_pp": (float(close_row["market_prob"]) - float(build_leg["market_prob"])) * 100.0,
