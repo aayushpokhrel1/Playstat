@@ -75,6 +75,7 @@ column, so each stint's game_id is resolved independently per row.
 import argparse
 import csv
 import io
+import time
 
 import requests
 
@@ -98,7 +99,19 @@ DEFAULT_SEASONS = "2023,2024,2025"
 # Only these position groups produce the offensive stats our prop-market
 # vocabulary covers (see STAT_COLUMN_MAP).
 OFFENSE_POSITION_GROUPS = {"QB", "RB", "WR", "TE"}
-REQUEST_TIMEOUT_SECONDS = 60
+
+# Timeout is a (connect, read) TUPLE, not a scalar: requests' scalar timeout is
+# per-socket-operation, not a total deadline, so a redirect chain (github.com ->
+# release-assets.githubusercontent.com) plus a trickling read stalled the
+# nfl_scores chain step ~741s on 2026-08-08 before failing (it then succeeded in
+# 3s on the chain-level retry — transient). The 2026-07-28 network-retry
+# hardening added (ConnectionError, Timeout) retries to the three ingestion
+# CLIENTS but missed this fourth, bare-requests path; this closes that gap with
+# the same retry shape api_client.py uses.
+CONNECT_TIMEOUT_SECONDS = 10
+READ_TIMEOUT_SECONDS = 30
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 5
 
 # Canonical, HARDCODED list of the 32 current NFL abbreviations (sorted).
 # Team and game IDs are derived from a team's 1-based index in this list, so
@@ -145,9 +158,18 @@ STAT_COLUMN_MAP = {
 
 
 def _fetch_csv(url):
-    response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
-    response.raise_for_status()
-    return list(csv.DictReader(io.StringIO(response.text)))
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = requests.get(url, timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS))
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            raise
+        # Only connection/timeout failures retry; HTTP errors (4xx/5xx) fail
+        # fast via raise_for_status, same as the other ingestion clients.
+        response.raise_for_status()
+        return list(csv.DictReader(io.StringIO(response.text)))
 
 
 def _team_id_map(schedule_rows, seasons):

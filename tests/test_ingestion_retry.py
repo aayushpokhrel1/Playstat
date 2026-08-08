@@ -21,6 +21,7 @@ import requests
 
 import ingestion.api_client as api_client
 import ingestion.mlb_backfill as mlb_backfill
+import ingestion.nfl_backfill as nfl_backfill
 import ingestion.odds_client as odds_client
 from ingestion.api_client import APISportsClient
 from ingestion.mlb_backfill import MLBStatsClient
@@ -28,12 +29,13 @@ from ingestion.odds_client import SportsGameOddsClient
 
 
 class FakeResponse:
-    """Minimal stand-in for requests.Response used by all three clients."""
+    """Minimal stand-in for requests.Response used by all clients under test."""
 
-    def __init__(self, status_code, json_data=None, headers=None):
+    def __init__(self, status_code, json_data=None, headers=None, text=""):
         self.status_code = status_code
         self._json_data = {} if json_data is None else json_data
         self.headers = headers or {}
+        self.text = text
 
     def json(self):
         return self._json_data
@@ -334,3 +336,83 @@ def test_api_429_minute_throttle_then_success_still_retries(monkeypatch):
     assert result == [{"id": 1}]
     assert calls["count"] == 2
     assert sleep_calls
+
+
+# --- nfl_backfill._fetch_csv --------------------------------------------------
+
+def test_nfl_fetch_csv_connection_error_then_success(monkeypatch):
+    # `_fetch_csv` uses module-level requests.get (not a session), so the
+    # scripted fake patches nfl_backfill.requests.get directly.
+    sleep_calls = _no_op_sleep(monkeypatch, nfl_backfill)
+    script = [
+        requests.exceptions.ConnectionError("boom"),
+        FakeResponse(200, text="a,b\n1,2\n"),
+    ]
+    fake_get, calls = _scripted_get(script)
+    monkeypatch.setattr(nfl_backfill.requests, "get", fake_get)
+
+    rows = nfl_backfill._fetch_csv("https://example.com/games.csv")
+
+    assert rows == [{"a": "1", "b": "2"}]
+    assert calls["count"] == 2
+    assert sleep_calls
+
+
+def test_nfl_fetch_csv_timeout_then_success(monkeypatch):
+    sleep_calls = _no_op_sleep(monkeypatch, nfl_backfill)
+    script = [
+        requests.exceptions.Timeout("slow"),
+        requests.exceptions.Timeout("slow again"),
+        FakeResponse(200, text="a,b\n1,2\n"),
+    ]
+    fake_get, calls = _scripted_get(script)
+    monkeypatch.setattr(nfl_backfill.requests, "get", fake_get)
+
+    rows = nfl_backfill._fetch_csv("https://example.com/games.csv")
+
+    assert rows == [{"a": "1", "b": "2"}]
+    assert calls["count"] == 3
+    assert sleep_calls
+
+
+def test_nfl_fetch_csv_connection_error_every_attempt_reraises(monkeypatch):
+    _no_op_sleep(monkeypatch, nfl_backfill)
+    script = [requests.exceptions.ConnectionError("boom")] * nfl_backfill.MAX_RETRIES
+    fake_get, calls = _scripted_get(script)
+    monkeypatch.setattr(nfl_backfill.requests, "get", fake_get)
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        nfl_backfill._fetch_csv("https://example.com/games.csv")
+
+    assert calls["count"] == nfl_backfill.MAX_RETRIES
+
+
+def test_nfl_fetch_csv_404_not_retried(monkeypatch):
+    _no_op_sleep(monkeypatch, nfl_backfill)
+    script = [FakeResponse(404)]
+    fake_get, calls = _scripted_get(script)
+    monkeypatch.setattr(nfl_backfill.requests, "get", fake_get)
+
+    with pytest.raises(requests.exceptions.HTTPError):
+        nfl_backfill._fetch_csv("https://example.com/games.csv")
+
+    assert calls["count"] == 1
+
+
+def test_nfl_fetch_csv_timeout_is_connect_read_tuple(monkeypatch):
+    _no_op_sleep(monkeypatch, nfl_backfill)
+    captured = {}
+
+    def _fake_get(*args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return FakeResponse(200, text="a,b\n1,2\n")
+
+    monkeypatch.setattr(nfl_backfill.requests, "get", _fake_get)
+
+    rows = nfl_backfill._fetch_csv("https://example.com/games.csv")
+
+    assert rows == [{"a": "1", "b": "2"}]
+    assert captured["timeout"] == (
+        nfl_backfill.CONNECT_TIMEOUT_SECONDS,
+        nfl_backfill.READ_TIMEOUT_SECONDS,
+    )
