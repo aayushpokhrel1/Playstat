@@ -9,6 +9,13 @@
       "autoPort": true
     },
     {
+      "name": "web-noauth",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "cd web && SESSION_SECRET= exec npm run dev -- -p 3100"],
+      "port": 3100,
+      "autoPort": true
+    },
+    {
       "name": "budgerr-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "/Users/aayushpokhrel/dev/budgerr-web", "run", "dev"],
