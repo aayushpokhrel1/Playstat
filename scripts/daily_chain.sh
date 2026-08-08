@@ -123,6 +123,17 @@ run_chain() {
 	# PLAYSTAT_MLB_ONLY_ODDS=0 to restore full multi-sport odds. The *_scores steps stay
 	# on (non-SGO APIs; they keep settle able to resolve any pending non-MLB parlays).
 	_mlb_only() { [ "${PLAYSTAT_MLB_ONLY_ODDS:-1}" = 1 ]; }
+
+	# NBA scores require a PAID API-Sports basketball plan. The free tier caps at
+	# seasons 2022-2024, so `--season current` returns a DETERMINISTIC error
+	# ("Free plans do not have access to this season, try from 2022 to 2024") —
+	# not a transient network fault. Left on _step_retry it burned a pointless
+	# 120s sleep + guaranteed-failing re-run EVERY night. Default OFF; nothing
+	# depends on it today (NBA builds are already skipped under _mlb_only, so no
+	# NBA parlays are created or left pending, and nba `games` data stops at the
+	# free-tier cap 2024-06-18). Flip PLAYSTAT_NBA_SCORES=1 — no code edit — the
+	# moment a paid plan exists.
+	_nba_scores_on() { [ "${PLAYSTAT_NBA_SCORES:-0}" = 1 ]; }
 	_nfl_weekly_build() {
 		if _mlb_only; then echo "=== nfl build: skipped (MLB-only odds, PLAYSTAT_MLB_ONLY_ODDS) ==="; return 0; fi
 		if [ "$(date +%u)" -ne 4 ]; then echo "=== nfl build: skipped (not Thursday) ==="; return 0; fi
@@ -199,7 +210,11 @@ run_chain() {
 		{ _nfl_weekly_build || echo "=== nfl weekly build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry nfl_scores "$PY" -m ingestion.nfl_backfill --only games || echo "=== nfl_scores: FAILED (non-fatal) ==="; } &&
 		{ _nba_daily_build || echo "=== nba daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
-		{ _step_retry nba_scores "$PY" -m ingestion.backfill --sport nba --only games --season current || echo "=== nba_scores: FAILED (non-fatal) ==="; } &&
+		{ if _nba_scores_on; then
+			_step_retry nba_scores "$PY" -m ingestion.backfill --sport nba --only games --season current || echo "=== nba_scores: FAILED (non-fatal) ==="
+		  else
+			echo "=== nba_scores: skipped (needs a paid API-Sports plan; set PLAYSTAT_NBA_SCORES=1) ==="
+		  fi; } &&
 		{ _mls_daily_build || echo "=== mls daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry mls_scores "$PY" -m ingestion.soccer_backfill --season 2024 --only fixtures || echo "=== mls_scores: FAILED (non-fatal) ==="; } &&
 		{ _ucl_daily_build || echo "=== ucl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
