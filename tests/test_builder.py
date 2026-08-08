@@ -45,10 +45,11 @@ def test_load_legs_threads_slate_date_through_to_both_loaders():
     source = inspect.getsource(builder.load_legs)
     # NFL tier #2 threads a trailing `sport` param alongside slate_date (see
     # test_load_legs_threads_sport_to_both_loaders below); NFL chain #4a adds a
-    # further trailing `window_days` param — updated here to match, same intent:
+    # further trailing `window_days` param; §15.9 item 11 Option B adds trailing
+    # confirmed_ids/started_game_ids — updated here to match, same intent:
     # slate_date is still passed positionally to both.
-    assert "load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate)" in source
-    assert "load_team_legs(engine, floor, slate_date, sport, window_days)" in source
+    assert "load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate," in source
+    assert "load_team_legs(engine, floor, slate_date, sport, window_days, started_game_ids)" in source
 
 
 def test_main_has_slate_date_and_team_only_cli_flags():
@@ -205,8 +206,8 @@ def test_load_legs_threads_sport_to_both_loaders():
     sig = inspect.signature(builder.load_legs)
     assert sig.parameters["sport"].default == "mlb"
     source = inspect.getsource(builder.load_legs)
-    assert "load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate)" in source
-    assert "load_team_legs(engine, floor, slate_date, sport, window_days)" in source
+    assert "load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate," in source
+    assert "load_team_legs(engine, floor, slate_date, sport, window_days, started_game_ids)" in source
 
 
 def test_save_builds_stamps_sport_into_blob():
@@ -299,7 +300,7 @@ def test_main_has_sport_flag_defaulting_to_mlb_and_threads_it():
     # threaded into loading and saving
     assert "args.sport" in source
     assert "load_legs(engine, args.floor, args.slate_date, args.sport, window_days," in source
-    assert "load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)" in source
+    assert "load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days," in source
     assert ", args.sport)" in source  # save_builds call carries sport last
 
 
@@ -339,7 +340,7 @@ def test_main_resolves_window_days_from_sport(monkeypatch):
     captured = {}
     monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
     monkeypatch.setattr("optimizer.builder.load_legs",
-                        lambda engine, floor, slate_date, sport, window_days, min_start_rate=0.0: captured.update(window_days=window_days) or [{"x": 1}])
+                        lambda engine, floor, slate_date, sport, window_days, min_start_rate=0.0, confirmed_ids=None, started_game_ids=None: captured.update(window_days=window_days) or [{"x": 1}])
     monkeypatch.setattr("optimizer.builder.build", _fake_build_with_stats)
     monkeypatch.setattr("sys.argv", ["builder", "--target-payout", "1.4", "--sport", "nfl"])
     from optimizer.builder import main
@@ -351,7 +352,7 @@ def test_main_window_days_flag_overrides_sport_default(monkeypatch):
     captured = {}
     monkeypatch.setattr("optimizer.builder.db.get_engine", lambda: object())
     monkeypatch.setattr("optimizer.builder.load_legs",
-                        lambda engine, floor, slate_date, sport, window_days, min_start_rate=0.0: captured.update(window_days=window_days) or [{"x": 1}])
+                        lambda engine, floor, slate_date, sport, window_days, min_start_rate=0.0, confirmed_ids=None, started_game_ids=None: captured.update(window_days=window_days) or [{"x": 1}])
     monkeypatch.setattr("optimizer.builder.build", _fake_build_with_stats)
     monkeypatch.setattr("sys.argv", ["builder", "--target-payout", "1.4", "--sport", "nfl", "--window-days", "0"])
     from optimizer.builder import main

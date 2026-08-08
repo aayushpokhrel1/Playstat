@@ -126,8 +126,29 @@ def filter_by_start_rate(legs, start_rates, min_start_rate):
     ]
 
 
+def filter_by_confirmed_lineup(legs, confirmed_ids, started_game_ids):
+    """Restrict legs to CONFIRMED starters in games that have not started.
+
+    README §15.9 item 11 Option B. Pure — the caller fetches the lineup.
+
+    confirmed_ids=None is OFF and returns `legs` unchanged (byte-identical
+    default). An EMPTY set is meaningfully different: it means no lineup has
+    posted, and every player leg is correctly dropped. Team legs carry no player
+    so a lineup can never confirm them — they are never lineup-filtered, only
+    excluded when their game has already started.
+    """
+    if confirmed_ids is None:
+        return legs
+    started = started_game_ids or set()
+    return [
+        leg for leg in legs
+        if leg["game_id"] not in started
+        and (leg["kind"] != "player" or leg["player_id"] in confirmed_ids)
+    ]
+
+
 def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0,
-                     min_start_rate=0.0):
+                     min_start_rate=0.0, confirmed_ids=None, started_game_ids=None):
     """Latest two-sided player prop lines on TODAY'S slate (unfinished games).
 
     model_prob is now ALWAYS None: the `edges` table it came from was dropped
@@ -174,14 +195,20 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
             conn, params={"slate_date": slate_date, "sport": sport, "window_days": window_days},
         )
     legs = _normalize(df, normalize_player_leg, floor)
-    # Start-probability filter (README §15.9 item 11). Default 0.0 = OFF, so the
-    # library default stays byte-identical; the chain/CLI opt in explicitly.
+    # Start-probability filter (README §15.9 item 11 Option A). Default 0.0 = OFF,
+    # so the library default stays byte-identical; the chain/CLI opt in explicitly.
     if min_start_rate:
         legs = filter_by_start_rate(legs, load_start_rates(engine, slate_date, sport), min_start_rate)
+    # Confirmed-lineup filter (Option B). Default None = OFF. Deliberately NOT
+    # combined with min_start_rate by the chain: a posted lineup is direct
+    # evidence of starting, and the start-rate proxy would drop confirmed
+    # starters with thin history for no reason.
+    legs = filter_by_confirmed_lineup(legs, confirmed_ids, started_game_ids)
     return legs
 
 
-def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0):
+def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0,
+                   started_game_ids=None):
     """Latest two-sided team-market lines on TODAY'S slate (unfinished games).
     See load_player_legs for the slate_date/sport/window_days rationale and for
     why model_prob is now always None (the `game_edges` table was dropped with
@@ -220,7 +247,13 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", wi
             conn, params={"markets": markets, "slate_date": slate_date, "sport": sport,
                           "window_days": window_days},
         )
-    return _normalize(df, normalize_team_leg, floor)
+    legs = _normalize(df, normalize_team_leg, floor)
+    # Team legs are never lineup-filtered (no player), but a started game is
+    # still out of scope for a confirmed-lineup card. confirmed_ids is passed as
+    # an empty set purely to switch the helper on; it is not consulted for team legs.
+    if started_game_ids is not None:
+        legs = filter_by_confirmed_lineup(legs, set(), started_game_ids)
+    return legs
 
 
 def _normalize(df, normalizer, floor):
@@ -250,9 +283,10 @@ def _normalize(df, normalizer, floor):
 
 
 def load_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", window_days=0,
-              min_start_rate=0.0):
-    return (load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate)
-            + load_team_legs(engine, floor, slate_date, sport, window_days))
+              min_start_rate=0.0, confirmed_ids=None, started_game_ids=None):
+    return (load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate,
+                             confirmed_ids, started_game_ids)
+            + load_team_legs(engine, floor, slate_date, sport, window_days, started_game_ids))
 
 
 def construction_signature(legs_json):
@@ -447,6 +481,10 @@ def main():
                              "lineups post, so rarely-used players void ~1 leg in 5. "
                              "0.0 = off (default); the daily chain passes 0.65. Team "
                              "legs and players with no measurable history are kept.")
+    parser.add_argument("--require-confirmed-lineup", action="store_true",
+                        help="MLB only: restrict player legs to players in a POSTED "
+                             "lineup and to games not yet started; saves class "
+                             "'confirmed_lineup' (README §15.9 item 11 Option B)")
     parser.add_argument("--same-game", action="store_true",
                         help="build the same-game NRFI+F5 combos class (README "
                              "§15.9 item 1): one lift-adjusted card per game that "
@@ -463,6 +501,15 @@ def main():
     if args.same_game and args.team_only:
         parser.error("--same-game and --team-only are mutually exclusive")
 
+    # The confirmed-lineup card is the MIXED player+team build (load_legs), whose
+    # team legs are still start-time filtered. Combining it with --team-only would
+    # save a pure team card mislabeled class='confirmed_lineup' (the class check
+    # below is evaluated first), and --same-game returns before the lineup fetch
+    # runs, so the flag would be silently ignored. Both are rejected loudly.
+    if args.require_confirmed_lineup and (args.team_only or args.same_game):
+        parser.error("--require-confirmed-lineup is incompatible with --team-only "
+                     "and --same-game")
+
     window_days = args.window_days if args.window_days is not None else SLATE_WINDOW_DAYS.get(args.sport, 0)
 
     engine = db.get_engine()
@@ -476,11 +523,28 @@ def main():
     if args.target_payout is None and args.min_prob is None:
         parser.error("pin at least one axis: --target-payout and/or --min-prob")
 
+    confirmed_ids = started_game_ids = None
+    if args.require_confirmed_lineup:
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+
+        from ingestion.mlb_lineups import fetch_lineups
+        now = datetime.now(timezone.utc)
+        slate = args.slate_date or now.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+        confirmed_ids, start_times = fetch_lineups(slate)
+        started_game_ids = {gid for gid, start in start_times.items() if start <= now}
+        print(f"confirmed lineups: {len(confirmed_ids)} players, "
+              f"{len(started_game_ids)} games already started")
+        if not confirmed_ids:
+            print("no posted lineups yet — nothing to build.")
+            return
+
     if args.team_only:
-        legs = load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)
+        legs = load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days,
+                              started_game_ids)
     else:
         legs = load_legs(engine, args.floor, args.slate_date, args.sport, window_days,
-                         args.min_start_rate)
+                         args.min_start_rate, confirmed_ids, started_game_ids)
     print(f"candidate legs (favorite side, market prob >= {args.floor:.0%}): {len(legs)}")
     if not legs:
         print("no candidate legs — nothing to build.")
@@ -508,7 +572,9 @@ def main():
                   f"(market {leg['market_prob']:.1%})")
 
     if args.save:
-        if args.team_only:
+        if args.require_confirmed_lineup:
+            parlay_class = "confirmed_lineup"
+        elif args.team_only:
             parlay_class = _team_class(args.sport)
         else:
             parlay_class = "across_game"
