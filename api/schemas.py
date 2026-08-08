@@ -226,6 +226,17 @@ class SavedBuilderParlayOut(BuilderParlayOut):
     parlay_id: int
     created_at: str
     target_payout: float
+    # Same-game combos (README §15.9 item 1) — correlation metadata read from the
+    # legs JSONB wrapper. `lift` is the empirically-measured same-game dependence
+    # (observed / independent-product) at the pair's actual lines+sides, `lift_n`
+    # the games it was measured over, `both_n` the joint "both hit" cell, and
+    # small_sample flags a lift backed by under ~a season of shared history.
+    # Additive/defaulted: None/False for every other class, so Budgerr's
+    # (default) player-tier consumption is byte-unchanged.
+    lift: float | None = None
+    lift_n: int | None = None
+    both_n: int | None = None
+    small_sample: bool = False
 
 
 class BuilderRecordOut(BaseModel):

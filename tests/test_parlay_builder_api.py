@@ -326,3 +326,98 @@ def test_saved_builder_query_filters_by_sport_with_mlb_default_coalesce():
     source = inspect.getsource(main.saved_builder_parlays)
     assert "COALESCE(legs->>'sport', 'mlb') = :sport" in source
     assert '"sport": sport' in source
+
+
+# --- same-game combos tier (README §15.9 item 1) ------------------------------
+
+def test_saved_tier_same_game_filters_to_same_game_pair_class(monkeypatch):
+    engine = _CapturingEngine()
+    monkeypatch.setattr(main, "engine", engine)
+
+    main.saved_builder_parlays(limit=10, tier="same_game")
+
+    sql, params = engine.calls[0]
+    assert "legs->>'class' = :cls" in sql
+    assert params["cls"] == "same_game_pair"
+
+
+def test_saved_same_game_row_exposes_lift_metadata(monkeypatch):
+    """The wrapper's correlation metadata surfaces on the response; the payout is
+    a NON-PLACEABLE reference, so the honest quantity is the lift-adjusted joint."""
+    same_game_row = (
+        300, "2026-08-07 08:31:00-04", 0.0, 0.3796, 3.2706,
+        {"class": "same_game_pair", "sport": "mlb",
+         "lift": 1.39, "lift_n": 6588, "both_n": 2197, "small_sample": False,
+         "legs": [
+             {"kind": "team", "game_id": 7, "player_id": None, "stat_type": None,
+              "market": "first_inning_runs", "side": "under", "odds": -130, "line": 0.5,
+              "label": "first_inning_runs under 0.5", "market_prob": 0.532,
+              "model_prob": None, "book": None},
+             {"kind": "team", "game_id": 7, "player_id": None, "stat_type": None,
+              "market": "f5_runs", "side": "under", "odds": -118, "line": 4.0,
+              "label": "f5_runs under 4.0", "market_prob": 0.514,
+              "model_prob": None, "book": None},
+         ]},
+    )
+    # Two team legs on ONE game -> main row query THEN the batched games query
+    # only (no player ids, so _load_builder_team_context skips the players query).
+    games_rows = [(7, 910, 911, "Team Home", "Team Away")]
+    monkeypatch.setattr(main, "engine", _fake_engine([[same_game_row], games_rows]))
+
+    out = main.saved_builder_parlays(limit=10, tier="same_game")
+
+    assert len(out) == 1
+    assert out[0].lift == 1.39 and out[0].lift_n == 6588
+    assert out[0].both_n == 2197 and out[0].small_sample is False
+    assert out[0].n_legs == 2
+    assert all(leg.kind == "team" for leg in out[0].legs)
+
+
+def test_saved_player_tier_lift_fields_default_to_none(monkeypatch):
+    """Budgerr's default tier is byte-unchanged: the new fields are None/False."""
+    player_row = (
+        301, "2026-08-07 08:31:00-04", 1.4, 0.6772, 1.4213,
+        {"class": "across_game", "sport": "mlb", "legs": [
+            {"kind": "player", "game_id": 1, "player_id": 10, "stat_type": "hits",
+             "market": None, "side": "over", "odds": -200, "line": 0.5,
+             "label": "X hits over 0.5", "market_prob": 0.66, "model_prob": None,
+             "book": None},
+        ]},
+    )
+    games_rows = [(1, 900, 901, "Home One", "Away One")]
+    players_rows = [(10, 900)]
+    monkeypatch.setattr(
+        main, "engine", _fake_engine([[player_row], games_rows, players_rows])
+    )
+
+    out = main.saved_builder_parlays(limit=10)
+
+    assert out[0].lift is None and out[0].lift_n is None
+    assert out[0].both_n is None and out[0].small_sample is False
+
+
+def test_saved_same_game_small_sample_flag_round_trips(monkeypatch):
+    row = (
+        302, "2026-08-07 08:31:00-04", 0.0, 0.30, 3.1,
+        {"class": "same_game_pair", "sport": "mlb",
+         "lift": 1.2, "lift_n": 900, "both_n": 220, "small_sample": True,
+         "legs": [
+             {"kind": "team", "game_id": 8, "player_id": None, "stat_type": None,
+              "market": "first_inning_runs", "side": "under", "odds": -120, "line": 0.5,
+              "label": "nrfi", "market_prob": 0.55, "model_prob": None, "book": None},
+             {"kind": "team", "game_id": 8, "player_id": None, "stat_type": None,
+              "market": "f5_runs", "side": "under", "odds": -110, "line": 4.5,
+              "label": "f5u", "market_prob": 0.55, "model_prob": None, "book": None},
+         ]},
+    )
+    monkeypatch.setattr(main, "engine", _fake_engine([[row], [(8, 1, 2, "H", "A")]]))
+
+    out = main.saved_builder_parlays(limit=10, tier="same_game")
+
+    assert out[0].small_sample is True and out[0].lift_n == 900
+
+
+def test_wrapper_meta_defaults_for_bare_list_legacy_rows():
+    """A legacy bare-list legs value (no wrapper) yields the additive defaults."""
+    meta = main._wrapper_meta([{"kind": "player"}])
+    assert meta == {"lift": None, "lift_n": None, "both_n": None, "small_sample": False}

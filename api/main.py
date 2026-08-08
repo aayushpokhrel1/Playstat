@@ -211,6 +211,25 @@ def _as_legs_list(raw):
     return raw
 
 
+def _wrapper_meta(raw):
+    """Wrapper-level same-game correlation metadata (README §15.9 item 1).
+
+    Only same_game_pair rows carry these keys; every other class (and any bare-list
+    legacy row) yields None/False, so the response shape is additive everywhere.
+    Same defensive dict-or-string handling as _as_legs_list.
+    """
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if isinstance(raw, dict):
+        return {
+            "lift": raw.get("lift"),
+            "lift_n": raw.get("lift_n"),
+            "both_n": raw.get("both_n"),
+            "small_sample": bool(raw.get("small_sample", False)),
+        }
+    return {"lift": None, "lift_n": None, "both_n": None, "small_sample": False}
+
+
 def player_side(player_team_id, home_id, away_id):
     """Pure: which side of a game a player's (latest-pull) team_id matches.
 
@@ -388,7 +407,8 @@ def parlay_builder(
 # `tier` gets exactly today's behaviour, unchanged (README §15.9 item 3 /
 # Budgerr contract — additive-only). "team" is the new dedicated team-only
 # tier (--team-only). "all" skips the class filter entirely.
-TIER_TO_CLASS = {"player": "across_game", "team": "team_tier", "game": "game_tier"}
+TIER_TO_CLASS = {"player": "across_game", "team": "team_tier", "game": "game_tier",
+                 "same_game": "same_game_pair"}
 
 
 @app.get("/parlay-builder/saved", response_model=list[SavedBuilderParlayOut])
@@ -403,7 +423,11 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player", sport: str = "m
     tier selects which builder class to return: "player" (default, unchanged
     behaviour — the mixed player+team across-game tier), "team" (the
     dedicated team-only tier, higher-variance NRFI/F5-only constructions,
-    may be empty on any given slate), or "all" (no class filter).
+    may be empty on any given slate), "same_game" (the labelled same-game
+    NRFI+F5 combos class, README §15.9 item 1 — carries lift/lift_n/both_n/
+    small_sample, and its combined_odds is a NON-PLACEABLE reference price:
+    a book reprices or restricts correlated same-game legs), or "all" (no
+    class filter).
 
     sport is an ADDITIVE filter (default "mlb", NFL builder sub-project #2):
     existing MLB rows predate the "sport" key in the legs blob, so
@@ -435,28 +459,30 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player", sport: str = "m
             {"limit": limit, "cls": TIER_TO_CLASS.get(tier), "sport": sport},
         ).fetchall()
 
-    parlays = [(r, _as_legs_list(r[5])) for r in rows]
+    parlays = [(r, _as_legs_list(r[5]), _wrapper_meta(r[5])) for r in rows]
 
     # Team-name context (docs/superpowers/plans/2026-07-28-leg-team-names.md)
     # — batched, no N+1: gather ids across every parlay's legs first. Query
     # order is main rows (above) THEN games THEN players — see
     # _load_builder_team_context / tests/test_leg_team_names.py.
     game_ids = {
-        leg["game_id"] for _, legs_raw in parlays for leg in legs_raw
+        leg["game_id"] for _, legs_raw, _ in parlays for leg in legs_raw
         if leg.get("game_id") is not None
     }
     player_ids = {
-        leg["player_id"] for _, legs_raw in parlays for leg in legs_raw
+        leg["player_id"] for _, legs_raw, _ in parlays for leg in legs_raw
         if leg.get("player_id") is not None
     }
     games, players = _load_builder_team_context(engine, game_ids, player_ids)
 
     out = []
-    for r, legs_raw in parlays:
+    for r, legs_raw, meta in parlays:
         out.append(
             SavedBuilderParlayOut(
                 parlay_id=r[0], created_at=str(r[1]), target_payout=float(r[2]),
                 joint_prob=float(r[3]), combined_odds=float(r[4]), n_legs=len(legs_raw),
+                lift=meta["lift"], lift_n=meta["lift_n"], both_n=meta["both_n"],
+                small_sample=meta["small_sample"],
                 legs=[
                     BuilderLegOut(
                         game_id=leg["game_id"], kind=leg["kind"], label=leg["label"],
@@ -474,10 +500,11 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player", sport: str = "m
 
 
 # reverse of TIER_TO_CLASS: legs->>'class' value -> reporting tier label
-_CLASS_TO_TIER = {"across_game": "player", "team_tier": "team", "game_tier": "game"}
+_CLASS_TO_TIER = {"across_game": "player", "team_tier": "team", "game_tier": "game",
+                  "same_game_pair": "same_game"}
 
 # tier sort key: player=0, team=1, game=2, unknown classes sort after all three.
-_TIER_SORT_ORDER = {"player": 0, "team": 1, "game": 2}
+_TIER_SORT_ORDER = {"player": 0, "team": 1, "game": 2, "same_game": 3}
 
 
 def _shape_builder_record(rows):
