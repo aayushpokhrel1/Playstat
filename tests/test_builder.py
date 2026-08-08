@@ -499,3 +499,40 @@ def test_save_builds_omits_lift_keys_for_normal_classes():
     blob = json.loads(engine.calls[0]["legs"])
     assert "lift" not in blob and "small_sample" not in blob
     assert set(blob.keys()) == {"class", "sport", "legs"}
+
+
+def test_build_same_game_helper_wires_pairs():
+    """--same-game (§15.9 item 1) threads floor-passing team legs through the pure
+    pairing fn with an injected lift — no DB."""
+    legs = [
+        {"game_id": 1, "market": "first_inning_runs", "side": "under",
+         "market_prob": 0.56, "decimal_odds": 1.8, "american_odds": -120,
+         "line_value": 0.5, "label": "nrfi", "book": None, "kind": "team"},
+        {"game_id": 1, "market": "f5_runs", "side": "under", "market_prob": 0.57,
+         "decimal_odds": 1.9, "american_odds": -110, "line_value": 4.5,
+         "label": "f5u", "book": None, "kind": "team"},
+    ]
+    cards = builder.build_same_game(legs, lambda sn, sf, nl, fl: (1.30, 2100, 1000), top_n=5)
+    assert len(cards) == 1
+    assert cards[0]["lift"] == 1.30 and cards[0]["n_legs"] == 2
+
+
+def test_same_game_lift_fn_caches_per_side_line_combo():
+    """One history read per distinct (sides, lines) combo per run."""
+    calls = []
+
+    def fake_lift(engine, sn, sf, nl, fl):
+        calls.append((sn, sf, nl, fl))
+        return (1.3, 2000, 900)
+
+    import modeling.correlation
+    original = builder.nrfi_f5_lift
+    builder.nrfi_f5_lift = fake_lift
+    try:
+        lift_fn = builder._same_game_lift_fn(object())
+        lift_fn("under", "under", 0.5, 4.5)
+        lift_fn("under", "under", 0.5, 4.5)   # cached
+        lift_fn("under", "under", 0.5, 5.5)   # different f5 line -> new read
+    finally:
+        builder.nrfi_f5_lift = original
+    assert len(calls) == 2

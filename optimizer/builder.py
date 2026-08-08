@@ -20,8 +20,9 @@ from sqlalchemy import text
 from ingestion import db
 from optimizer.builder_core import (
     DEFAULT_FLOOR, DEFAULT_MAX_LEGS, DEFAULT_MIN_LEGS, DEFAULT_TOLERANCE,
-    build, normalize_player_leg, normalize_team_leg, passes_floor,
+    build, normalize_player_leg, normalize_team_leg, passes_floor, same_game_pairs,
 )
+from modeling.correlation import nrfi_f5_lift
 
 TEAM_MARKETS = {
     "mlb": ("first_inning_runs", "f5_runs"),
@@ -268,6 +269,54 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
     return rows
 
 
+def build_same_game(team_legs, lift_fn, top_n=10):
+    """Same-game NRFI+F5 cards from floor-passing team legs (README §15.9 item 1).
+
+    Thin wrapper over builder_core.same_game_pairs with the default sample gate,
+    kept so main() stays thin and this wiring is unit-testable without a DB.
+    """
+    return same_game_pairs(team_legs, lift_fn, top_n=top_n)
+
+
+def _same_game_lift_fn(engine):
+    """Cached (side_nrfi, side_f5, nrfi_line, f5_line) -> (lift, n_games, both_n).
+    Each distinct combo hits the box-score history once per run."""
+    cache = {}
+
+    def lift_fn(side_nrfi, side_f5, nrfi_line, f5_line):
+        key = (side_nrfi, side_f5, nrfi_line, f5_line)
+        if key not in cache:
+            cache[key] = nrfi_f5_lift(engine, side_nrfi, side_f5, nrfi_line, f5_line)
+        return cache[key]
+
+    return lift_fn
+
+
+def _run_same_game(engine, args, window_days):
+    """The --same-game build: one lift-adjusted NRFI+F5 card per eligible game.
+
+    Deliberately labelled EXCEPTION to the across-game-only guardrail (§15.8 #5).
+    The printed payout is a NON-PLACEABLE reference — a book reprices or restricts
+    correlated same-game legs — so the honest quantity is the lift-adjusted joint.
+    """
+    legs = load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)
+    print(f"same-game team legs (favorite side, market prob >= {args.floor:.0%}): {len(legs)}")
+    cards = build_same_game(legs, _same_game_lift_fn(engine), top_n=args.top_n)
+    print(f"same-game cards (post-gate): {len(cards)}")
+    for c in cards:
+        warn = " [SMALL SAMPLE]" if c["small_sample"] else ""
+        print(f"  ~{c['joint_prob']:.1%} joint  (lift x{c['lift']:.2f}, "
+              f"n={c['lift_n']:,} games{warn})  ref payout {c['combined_odds']:.2f}x "
+              f"— NOT a placeable same-game price")
+        for leg in c["legs"]:
+            print(f"      - {leg['label']} @ {leg['american_odds']:+d} "
+                  f"(market {leg['market_prob']:.1%})")
+    if args.save:
+        saved = save_builds(engine, 0.0, cards, "same_game_pair", args.sport)
+        print(f"parlay_recommendations (kind=builder, class=same_game_pair): "
+              f"inserted {saved} rows")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Low-risk parlay builder (no edge/EV claim).")
     parser.add_argument("--target-payout", type=float, default=None,
@@ -302,6 +351,12 @@ def main():
                         help="build from team-market (NRFI/F5) legs only — a dedicated, "
                              "higher-variance team tier (README §15.9 item 5). --save "
                              "writes class=\"team_tier\" instead of \"across_game\".")
+    parser.add_argument("--same-game", action="store_true",
+                        help="build the same-game NRFI+F5 combos class (README "
+                             "§15.9 item 1): one lift-adjusted card per game that "
+                             "has both markets clearing the floor. Pins no payout "
+                             "axis (--target-payout/--min-prob are ignored). --save "
+                             "writes class=\"same_game_pair\".")
     parser.add_argument("--sport", default="mlb",
                         help="which sport's candidate legs to build from "
                              "(default: mlb — the daily chain passes no --sport). "
@@ -309,12 +364,22 @@ def main():
     parser.add_argument("--save", action="store_true", help="persist to parlay_recommendations")
     args = parser.parse_args()
 
-    if args.target_payout is None and args.min_prob is None:
-        parser.error("pin at least one axis: --target-payout and/or --min-prob")
+    if args.same_game and args.team_only:
+        parser.error("--same-game and --team-only are mutually exclusive")
 
     window_days = args.window_days if args.window_days is not None else SLATE_WINDOW_DAYS.get(args.sport, 0)
 
     engine = db.get_engine()
+
+    # Same-game pins no payout axis (one card per game, not a search), so it
+    # returns before the --target-payout/--min-prob requirement below.
+    if args.same_game:
+        _run_same_game(engine, args, window_days)
+        return
+
+    if args.target_payout is None and args.min_prob is None:
+        parser.error("pin at least one axis: --target-payout and/or --min-prob")
+
     if args.team_only:
         legs = load_team_legs(engine, args.floor, args.slate_date, args.sport, window_days)
     else:
