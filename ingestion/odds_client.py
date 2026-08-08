@@ -61,13 +61,33 @@ class SportsGameOddsClient:
 
         raise RuntimeError(f"Exhausted retries fetching {path}")
 
-    def get_events(self, league_id, odds_available=True):
-        """Yields events across all pages for a league."""
+    def get_events(self, league_id, odds_available=True, starts_after=None,
+                   starts_before=None, limit=None):
+        """Yields events across all pages for a league.
+
+        starts_after/starts_before (UTC ISO-8601) narrow the pull to one slate
+        window. This is a QUOTA control, not a convenience: the free tier meters
+        entities (1 returned event = 1 entity, 2,500/month) and an unfiltered MLB
+        pull returns ~51 events, ~70% of them future-dated games the builder
+        discards. See ingestion/slate_window.py and README §15.9 item 11.
+
+        limit sets the page size; limit=100 makes a narrowed slate fit in ONE
+        request instead of paging at 6.5s/request (the 2026-08-08 odds step took
+        885s largely for this reason).
+
+        Defaults are all None/unset, so the unfiltered call is byte-identical.
+        """
         cursor = None
         while True:
             params = {"leagueID": league_id}
             if odds_available:
                 params["oddsAvailable"] = "true"
+            if starts_after:
+                params["startsAfter"] = starts_after
+            if starts_before:
+                params["startsBefore"] = starts_before
+            if limit:
+                params["limit"] = limit
             if cursor:
                 params["cursor"] = cursor
 

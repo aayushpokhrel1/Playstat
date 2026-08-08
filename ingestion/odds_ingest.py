@@ -274,7 +274,7 @@ def observed_statid_summary(events, stat_map, game_markets):
     return {"mapped": mapped, "unmapped": unmapped, "bettypes": bettypes}
 
 
-def ingest_odds(sport="nba", dry_run=False):
+def ingest_odds(sport="nba", dry_run=False, starts_after=None, starts_before=None):
     stat_map = STAT_MAPS[sport]
     game_markets = GAME_MARKETS.get(sport, {})
     odds_league_id = SPORTS[sport]["odds_league_id"]
@@ -287,7 +287,13 @@ def ingest_odds(sport="nba", dry_run=False):
         player_index = matching.load_player_index(conn, sport)
         game_index = matching.load_game_index(conn, sport)
 
-    events = list(client.get_events(odds_league_id, odds_available=True))
+    # limit=100 only when a window is set: a narrowed slate then fits in ONE
+    # request. Unfiltered calls keep the old paging so behaviour is unchanged.
+    events = list(client.get_events(
+        odds_league_id, odds_available=True,
+        starts_after=starts_after, starts_before=starts_before,
+        limit=100 if (starts_after or starts_before) else None,
+    ))
 
     if dry_run:
         summary = observed_statid_summary(events, stat_map, game_markets)
@@ -390,5 +396,26 @@ if __name__ == "__main__":
     parser.add_argument("--sport", choices=list(STAT_MAPS), default="nba")
     parser.add_argument("--dry-run", action="store_true",
                         help="fetch and report statID coverage + match rates without writing")
+    parser.add_argument("--starts-after", default=None,
+                        help="UTC ISO-8601 lower bound on event start (quota control, "
+                             "README §15.9 item 11); default None = unfiltered")
+    parser.add_argument("--starts-before", default=None,
+                        help="UTC ISO-8601 upper bound on event start")
+    parser.add_argument("--slate-window", action="store_true",
+                        help="derive --starts-after/--starts-before from the sport's "
+                             "ET slate window (ingestion/slate_window.py)")
+    parser.add_argument("--not-before-now", action="store_true",
+                        help="with --slate-window, exclude already-started games")
     args = parser.parse_args()
-    ingest_odds(args.sport, dry_run=args.dry_run)
+
+    starts_after, starts_before = args.starts_after, args.starts_before
+    if args.slate_window:
+        from datetime import datetime, timezone
+
+        from ingestion.slate_window import slate_window
+        starts_after, starts_before = slate_window(
+            datetime.now(timezone.utc), args.sport, args.not_before_now
+        )
+        print(f"({args.sport}) slate window: {starts_after} .. {starts_before}")
+    ingest_odds(args.sport, dry_run=args.dry_run,
+                starts_after=starts_after, starts_before=starts_before)
