@@ -358,65 +358,35 @@ those keys).
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `tests/test_builder.py` (reuse the existing `_CapturingEngine` /
-`_CapturingConn` fake-engine pattern already in that file — inspect it; it captures
-executed SQL + params). Model the test on the existing `save_builds` tests there.
+Add to `tests/test_builder.py`. **Use the file's REAL fake-engine API**, verified by
+reading it: `_CapturingEngine(select_rows=())` (default empty = no dedup rows),
+INSERT params land in `engine.calls`, and the existing helper `_one_result(kind=...,
+**overrides)` builds a `[{"legs":[leg], "joint_prob":0.6, "combined_odds":1.6}]`
+result. Mirror the existing `test_save_builds_writes_team_tier_class_when_instructed`.
 
 ```python
-def test_save_builds_writes_lift_metadata_for_same_game(monkeypatch):
-    import json
-    from optimizer import builder
-    eng = _CapturingEngine(existing_legs=[])  # no dedup collisions
-    result = {
-        "joint_prob": 0.41, "combined_odds": 3.2,
-        "lift": 1.30, "lift_n": 2100, "both_n": 1000, "small_sample": False,
-        "legs": [
-            {"kind": "team", "game_id": 1, "player_id": None, "stat_type": None,
-             "market": "first_inning_runs", "side": "under", "american_odds": -120,
-             "line_value": 0.5, "label": "nrfi", "market_prob": 0.56,
-             "model_prob": None, "book": None},
-            {"kind": "team", "game_id": 1, "player_id": None, "stat_type": None,
-             "market": "f5_runs", "side": "under", "american_odds": -110,
-             "line_value": 4.5, "label": "f5u", "market_prob": 0.57,
-             "model_prob": None, "book": None},
-        ],
-    }
-    builder.save_builds(eng, 0.0, [result], parlay_class="same_game_pair", sport="mlb")
-    wrapper = json.loads(eng.last_insert_params["legs"])
-    assert wrapper["class"] == "same_game_pair"
-    assert wrapper["lift"] == 1.30 and wrapper["lift_n"] == 2100
-    assert wrapper["both_n"] == 1000 and wrapper["small_sample"] is False
-    assert len(wrapper["legs"]) == 2
+def test_save_builds_writes_lift_metadata_for_same_game():
+    engine = _CapturingEngine()
+    results = _one_result("team")
+    results[0].update({"lift": 1.30, "lift_n": 2100, "both_n": 1000, "small_sample": False})
+    builder.save_builds(engine, 0.0, results, parlay_class="same_game_pair", sport="mlb")
+    blob = json.loads(engine.calls[0]["legs"])
+    assert blob["class"] == "same_game_pair"
+    assert blob["lift"] == 1.30 and blob["lift_n"] == 2100
+    assert blob["both_n"] == 1000 and blob["small_sample"] is False
+    assert len(blob["legs"]) == 2
 
 
-def test_save_builds_omits_lift_keys_for_normal_classes(monkeypatch):
-    import json
-    from optimizer import builder
-    eng = _CapturingEngine(existing_legs=[])
-    result = {
-        "joint_prob": 0.67, "combined_odds": 1.4,
-        "legs": [
-            {"kind": "player", "game_id": 1, "player_id": 9, "stat_type": "hits",
-             "market": None, "side": "over", "american_odds": -200, "line_value": 0.5,
-             "label": "x hits over 0.5", "market_prob": 0.66, "model_prob": None,
-             "book": None},
-            {"kind": "player", "game_id": 2, "player_id": 8, "stat_type": "hits",
-             "market": None, "side": "over", "american_odds": -180, "line_value": 0.5,
-             "label": "y hits over 0.5", "market_prob": 0.64, "model_prob": None,
-             "book": None},
-        ],
-    }
-    builder.save_builds(eng, 1.4, [result], parlay_class="across_game", sport="mlb")
-    wrapper = json.loads(eng.last_insert_params["legs"])
-    assert "lift" not in wrapper and "small_sample" not in wrapper
-    assert set(wrapper.keys()) == {"class", "sport", "legs"}
+def test_save_builds_omits_lift_keys_for_normal_classes():
+    engine = _CapturingEngine()
+    builder.save_builds(engine, 1.4, _one_result("player"))
+    blob = json.loads(engine.calls[0]["legs"])
+    assert "lift" not in blob and "small_sample" not in blob
+    assert set(blob.keys()) == {"class", "sport", "legs"}
 ```
 
-> **Worker note:** inspect the real `_CapturingEngine` in `tests/test_builder.py`. If
-> its constructor/attribute names differ from `existing_legs=` /
-> `last_insert_params`, adapt these two tests to the actual fake-engine API (the
-> existing `save_builds` tests in that file show the exact usage). Keep the
-> assertions.
+(`_one_result` and `_CapturingEngine` already exist in `tests/test_builder.py`; `json`
+and `builder` are already imported there — do not re-import.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
