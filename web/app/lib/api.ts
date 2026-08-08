@@ -84,6 +84,29 @@ export type BuilderRecordDaily = {
   roi: number; // pnl / staked (stake-weighted)
 };
 
+export type DailyParlayLeg = {
+  label: string | null;
+  side: string | null;
+  line: number | null;
+  actual: number | null;
+  result: string | null; // hit/won -> ✓, miss/lost -> ✗, void -> –, null -> pending
+  odds: number | null;
+  book: string | null;
+  home_team: string | null;
+  away_team: string | null;
+};
+
+export type DailyParlay = {
+  parlay_id: number;
+  result: "win" | "loss" | "push";
+  tier: "player" | "team" | "game";
+  target_payout: number;
+  combined_odds: number;
+  stake: number;
+  pnl: number;
+  legs: DailyParlayLeg[];
+};
+
 export type BuilderSearchParams = {
   target_payout?: number;
   min_prob?: number;
@@ -142,6 +165,14 @@ export function getBuilderRecord(sport = "mlb") {
 // Per-day drill-down of the same settled-builder data (README §15 follow-on).
 export function getBuilderRecordDaily(sport = "mlb") {
   return apiGet<BuilderRecordDaily[]>(`/parlay-builder/record/daily?sport=${sport}`);
+}
+
+// Settled builder parlays for one slate date, each with per-leg result — the
+// day -> parlay -> leg autopsy (per-day parlay drill-down spec). Dashboard-only.
+export function getDailyParlays(date: string, sport = "mlb") {
+  return apiGet<DailyParlay[]>(
+    `/parlay-builder/record/daily/parlays?date=${date}&sport=${sport}`,
+  );
 }
 
 // tier is additive (README §15 Change 3): "player" is the default and

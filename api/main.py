@@ -15,6 +15,8 @@ from api.schemas import (
     BuilderRecordDailyOut,
     BuilderRecordOut,
     BuilderSearchOut,
+    DailyParlayLegOut,
+    DailyParlayOut,
     GameLogEntry,
     GameOut,
     PlayerOut,
@@ -553,6 +555,52 @@ def _shape_builder_record_daily(rows):
     return shaped
 
 
+def _merge_parlay_legs(rec_legs, audit_legs):
+    """Join recommendation legs (label + team context) with settlement audit
+    legs (result/actual) by builder_leg_key. Order follows the recommendation.
+    Audit-missing legs keep result/actual None (shouldn't happen for a settled
+    parlay). DB-free."""
+    audit_by_key = {}
+    for a in audit_legs:
+        try:
+            audit_by_key[settle.builder_leg_key(a)] = a
+        except (ValueError, KeyError, TypeError):
+            continue
+    merged = []
+    for r in rec_legs:
+        try:
+            a = audit_by_key.get(settle.builder_leg_key(r), {})
+        except (ValueError, KeyError, TypeError):
+            a = {}
+        merged.append(DailyParlayLegOut(
+            label=r.get("label"), side=r.get("side"), line=r.get("line"),
+            actual=a.get("actual"), result=a.get("result"),
+            odds=r.get("odds"), book=r.get("book"),
+            home_team=r.get("home_team"), away_team=r.get("away_team"),
+        ))
+    return merged
+
+
+def _shape_daily_parlays(rows):
+    """Pure: rows are (parlay_id, result, cls, target_payout, combined_odds,
+    stake, pnl, rec_legs, audit_legs). rec_legs is the {class,legs,sport}
+    wrapper; audit_legs is the settlement audit list. Maps cls->tier, casts
+    Decimals to float, merges legs. DB-free."""
+    out = []
+    for parlay_id, result, cls, target_payout, combined_odds, stake, pnl, rec_legs, audit_legs in rows:
+        blob = _as_legs_list(rec_legs)
+        rec = blob["legs"] if isinstance(blob, dict) else blob
+        audit = _as_legs_list(audit_legs)
+        out.append(DailyParlayOut(
+            parlay_id=int(parlay_id), result=result,
+            tier=_CLASS_TO_TIER.get(cls, cls),
+            target_payout=float(target_payout), combined_odds=float(combined_odds),
+            stake=float(stake or 0), pnl=float(pnl or 0),
+            legs=_merge_parlay_legs(rec, audit),
+        ))
+    return out
+
+
 @app.get("/parlay-builder/record/daily", response_model=list[BuilderRecordDailyOut])
 def builder_record_daily(sport: str = "mlb"):
     """Per-day drill-down of the builder record (README §15 follow-on):
@@ -574,6 +622,29 @@ def builder_record_daily(sport: str = "mlb"):
             """
         ), {"sport": sport}).fetchall()
     return _shape_builder_record_daily(rows)
+
+
+@app.get("/parlay-builder/record/daily/parlays", response_model=list[DailyParlayOut])
+def builder_record_daily_parlays(date: str, sport: str = "mlb"):
+    """Settled builder parlays for one slate date, each with per-leg result
+    (README per-day drill-down). Dashboard-only; additive; not a Budgerr
+    surface. date is YYYY-MM-DD; sport defaults to mlb like the other record
+    endpoints."""
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            """
+            SELECT ro.parlay_id, ro.result, pr.legs->>'class' AS cls,
+                   pr.target_payout, ro.decimal_odds, ro.stake, ro.pnl,
+                   pr.legs AS rec_legs, ro.legs AS audit_legs
+            FROM recommendation_outcomes ro
+            JOIN parlay_recommendations pr ON pr.parlay_id = ro.parlay_id
+            WHERE pr.kind = 'builder'
+              AND COALESCE(pr.legs->>'sport', 'mlb') = :sport
+              AND date(pr.created_at) = :date
+            ORDER BY ro.parlay_id DESC
+            """
+        ), {"sport": sport, "date": date}).fetchall()
+    return _shape_daily_parlays(rows)
 
 
 @app.get("/bet-performance", response_model=list[BetPerformanceOut])

@@ -258,3 +258,32 @@ class BuilderRecordDailyOut(BaseModel):
     staked: float = 0.0  # sum of Kelly stakes (README §15.9 item 4); additive
     pnl: float
     roi: float           # pnl / staked (stake-weighted); 0.0 when staked == 0
+
+
+class DailyParlayLegOut(BaseModel):
+    """One leg of a settled builder parlay in the per-day drill-down: label +
+    team context from the recommendation, result/actual from the settlement
+    audit (README per-day drill-down spec)."""
+
+    label: str | None = None
+    side: str | None = None
+    line: float | None = None
+    actual: float | None = None
+    result: str | None = None       # hit/won -> ✓, miss/lost -> ✗, void -> –, None -> pending
+    odds: int | None = None
+    book: str | None = None
+    home_team: str | None = None
+    away_team: str | None = None
+
+
+class DailyParlayOut(BaseModel):
+    """One settled builder parlay for a slate date (dashboard-only drill-down)."""
+
+    parlay_id: int
+    result: str                     # win | loss | push
+    tier: str                       # player | team | game
+    target_payout: float
+    combined_odds: float
+    stake: float
+    pnl: float
+    legs: list[DailyParlayLegOut]

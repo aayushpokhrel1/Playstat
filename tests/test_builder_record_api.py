@@ -323,3 +323,86 @@ def test_tier_sort_orders_player_team_game():
 
 def test_tier_to_class_has_game_entry():
     assert api_main.TIER_TO_CLASS["game"] == "game_tier"
+
+
+# --- _merge_parlay_legs: rec labels + audit results by builder_leg_key -------
+
+from api.schemas import DailyParlayLegOut
+
+
+def test_merge_parlay_legs_joins_label_from_rec_and_result_from_audit():
+    rec = [
+        {"kind": "player", "game_id": 5, "player_id": 9, "stat_type": "hits",
+         "label": "Aaron Judge hits over 1.5", "side": "over", "line": 1.5, "odds": -120,
+         "home_team": "NYY", "away_team": "BOS"},
+        {"kind": "team", "game_id": 7, "market": "f5_runs",
+         "label": "f5_runs under 5.5", "side": "under", "line": 5.5, "odds": -143},
+    ]
+    audit = [
+        {"kind": "team", "game_id": 7, "market": "f5_runs", "actual": 4.0, "result": "hit"},
+        {"kind": "player", "game_id": 5, "player_id": 9, "stat_type": "hits",
+         "actual": 2.0, "result": "hit"},
+    ]
+    out = api_main._merge_parlay_legs(rec, audit)
+    assert [l.label for l in out] == ["Aaron Judge hits over 1.5", "f5_runs under 5.5"]  # rec order
+    assert out[0].actual == 2.0 and out[0].result == "hit"      # matched across list order
+    assert out[0].home_team == "NYY"
+    assert out[1].actual == 4.0 and out[1].result == "hit"
+
+
+def test_merge_parlay_legs_audit_missing_leaves_result_none():
+    rec = [{"kind": "team", "game_id": 7, "market": "f5_runs", "label": "x", "side": "under",
+            "line": 5.5, "odds": -143}]
+    out = api_main._merge_parlay_legs(rec, [])
+    assert out[0].result is None and out[0].actual is None
+
+
+# --- _shape_daily_parlays: pure per-day parlay shaper (Task 3) ----------------
+
+from api.schemas import DailyParlayOut
+
+
+def test_shape_daily_parlays_maps_tier_and_merges_legs():
+    rec_wrapper = {"class": "team_tier", "sport": "mlb", "legs": [
+        {"kind": "team", "game_id": 7, "market": "f5_runs", "label": "f5_runs under 5.5",
+         "side": "under", "line": 5.5, "odds": -143}]}
+    audit = [{"kind": "team", "game_id": 7, "market": "f5_runs", "actual": 4.0, "result": "hit"}]
+    rows = [(297, "loss", "team_tier", Decimal("1.4"), Decimal("2.913"), Decimal("1.0"),
+             Decimal("-1.0"), rec_wrapper, audit)]
+    out = api_main._shape_daily_parlays(rows)
+    assert len(out) == 1
+    p = out[0]
+    assert isinstance(p, DailyParlayOut)
+    assert p.tier == "team" and p.result == "loss"
+    assert p.stake == 1.0 and p.pnl == -1.0 and p.combined_odds == 2.913
+    assert p.legs[0].label == "f5_runs under 5.5" and p.legs[0].result == "hit"
+
+
+def test_shape_daily_parlays_empty_rows_returns_empty_list():
+    assert api_main._shape_daily_parlays([]) == []
+
+
+# --- endpoint test: api_main.builder_record_daily_parlays() ------------------
+
+
+def test_daily_parlays_endpoint_shapes_rows(monkeypatch):
+    rec = {"class": "across_game", "sport": "mlb", "legs": [
+        {"kind": "player", "game_id": 5, "player_id": 9, "stat_type": "hits",
+         "label": "J hits o1.5", "side": "over", "line": 1.5, "odds": -120}]}
+    audit = [{"kind": "player", "game_id": 5, "player_id": 9, "stat_type": "hits",
+              "actual": 2.0, "result": "hit"}]
+    rows = [(1, "win", "across_game", Decimal("1.4"), Decimal("1.4"), Decimal("0.5"),
+             Decimal("0.2"), rec, audit)]
+    eng = _CapturingEngine(rows)
+    monkeypatch.setattr(api_main, "engine", eng)
+    out = api_main.builder_record_daily_parlays(date="2026-08-06")
+    assert len(out) == 1 and out[0].result == "win"
+    assert out[0].legs[0].result == "hit"
+    assert eng.calls[0]["sport"] == "mlb" and eng.calls[0]["date"] == "2026-08-06"
+
+
+def test_daily_parlays_endpoint_threads_sport(monkeypatch):
+    eng = _CapturingEngine([])
+    monkeypatch.setattr(api_main, "engine", eng)
+    api_main.builder_record_daily_parlays(date="2026-08-06", sport="nfl")
+    assert eng.calls[0]["sport"] == "nfl"
