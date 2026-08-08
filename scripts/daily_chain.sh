@@ -191,6 +191,11 @@ run_chain() {
 		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
+		# Same-game NRFI+F5 combos (README §15.9 item 1) — the labelled exception to
+		# the across-game-only guardrail. Pins no payout axis (one card per eligible
+		# game). Non-fatal: this class is empty most nights (both markets must clear
+		# the 0.55 floor in the SAME game), and it must never block the player card.
+		{ _step builder_same_game "$PY" -m optimizer.builder --same-game --top-n 5 --save || echo "=== builder_same_game: FAILED (non-fatal) ==="; } &&
 		{ _nfl_weekly_build || echo "=== nfl weekly build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry nfl_scores "$PY" -m ingestion.nfl_backfill --only games || echo "=== nfl_scores: FAILED (non-fatal) ==="; } &&
 		{ _nba_daily_build || echo "=== nba daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&

@@ -322,3 +322,38 @@ def test_nfl_game_market_parlay_settles(monkeypatch):
     assert by_market["full_game_moneyline"]["result"] == "won"
     assert by_market["full_game_spread"]["result"] == "won"
     assert by_market["full_game_total"]["result"] == "hit"  # existing settle_leg vocabulary
+
+
+# --- same-game combos settle through the shared path (README §15.9 item 1) ---
+# A same-game card is TWO team legs on ONE game_id. Settlement's team lookups are
+# keyed by (game_id, market), so the two legs resolve independently — there is no
+# distinct-game assumption anywhere in the leg loop. These lock that in.
+
+def test_same_game_pair_both_legs_hit_wins():
+    """NRFI (fi 0 < 0.5) + F5-under (f5 3 < 4.0), same game -> win."""
+    results = [settle_leg("under", 0.0, 0.5), settle_leg("under", 3.0, 4.0)]
+    assert results == ["hit", "hit"]
+    result, odds, pnl = parlay_result(results, [1.769, 1.847])
+    assert result == "win"
+    assert pnl > 0
+
+
+def test_same_game_pair_one_leg_miss_loses():
+    """The 1st inning stays scoreless but the first five go over -> loss."""
+    results = [settle_leg("under", 0.0, 0.5), settle_leg("under", 6.0, 4.0)]
+    assert results == ["hit", "miss"]
+    result, _, pnl = parlay_result(results, [1.769, 1.847])
+    assert result == "loss"
+    assert pnl == pytest.approx(-1.0)
+
+
+def test_same_game_pair_leg_keys_are_distinct_despite_shared_game():
+    """Both legs share a game_id; the market disambiguates them, so the
+    settlement audit can't collapse the pair into one key."""
+    nrfi = {"kind": "team", "game_id": 55, "player_id": None, "stat_type": None,
+            "market": "first_inning_runs"}
+    f5 = {"kind": "team", "game_id": 55, "player_id": None, "stat_type": None,
+          "market": "f5_runs"}
+    assert builder_leg_key(nrfi) != builder_leg_key(f5)
+    assert builder_leg_key(nrfi) == ("team", 55, "first_inning_runs")
+    assert builder_leg_key(f5) == ("team", 55, "f5_runs")

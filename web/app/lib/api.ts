@@ -59,6 +59,15 @@ export type SavedBuilderParlay = BuilderConstruction & {
   parlay_id: number;
   created_at: string;
   target_payout: number;
+  // Same-game combos (README §15.9 item 1). Present only on the same_game tier;
+  // null/false everywhere else. `lift` is the measured same-game dependence
+  // (observed / independent product) at the pair's actual lines+sides, `lift_n`
+  // the games behind it, `both_n` the joint "both hit" count, and small_sample
+  // flags under ~a season of shared history.
+  lift?: number | null;
+  lift_n?: number | null;
+  both_n?: number | null;
+  small_sample?: boolean;
 };
 
 export type BuilderRecord = {
@@ -183,7 +192,7 @@ export function getDailyParlays(date: string, sport = "mlb") {
 // sport is additive (default "mlb") — existing callers unchanged.
 export function getSavedBuilderParlays(
   limit = 10,
-  tier: "player" | "team" | "game" | "all" = "player",
+  tier: "player" | "team" | "game" | "same_game" | "all" = "player",
   sport = "mlb",
 ) {
   return apiGet<SavedBuilderParlay[]>(`/parlay-builder/saved?limit=${limit}&tier=${tier}&sport=${sport}`);

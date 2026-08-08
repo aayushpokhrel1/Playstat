@@ -5,10 +5,12 @@ import {
   getDailyParlays,
   getSavedBuilderParlays,
   type DailyParlay,
+  type SavedBuilderParlay,
 } from "../lib/api";
 import BuilderControls from "./BuilderControls";
 import ConstructionList from "./ConstructionList";
 import RecordPanel from "./RecordPanel";
+import SameGameList from "./SameGameList";
 import RetryButton from "./RetryButton";
 import SportTabs from "./SportTabs";
 import styles from "./builder.module.css";
@@ -27,6 +29,16 @@ const SPORT_CFG = {
       body: "NRFI/F5 lines rarely clear the safety floor, so an empty night here is normal — check back tomorrow, or after the next nightly build.",
     },
     emptyAll: null as null | { title: string; body: string },
+    // Same-game combos (README §15.9 item 1) — MLB only: NRFI and F5 are the
+    // only paired team markets with enough shared history to measure.
+    tier3: {
+      heading: "Same-game combos (NRFI + F5)",
+      note: "Every other section pairs legs from different games, which are independent. These two are from the SAME game and move together — in a low-scoring game, no run in the 1st and a quiet first five tend to land together — so multiplying them understates the real chance both hit. We correct for the measured correlation and show how many games it comes from.",
+      empty: {
+        title: "No same-game combos tonight",
+        body: "Both NRFI and F5 have to clear the safety floor in the same game, which is rare — an empty night here is normal.",
+      },
+    },
   },
   nfl: {
     tier2: "game" as const,
@@ -119,15 +131,21 @@ export default async function BuilderPage({
   let tier2Saved;
   let builderRecord;
   let builderRecordDaily;
+  let sameGameSaved: SavedBuilderParlay[] = [];
   let parlaysByDate: Record<string, DailyParlay[]> = {};
   let fetchError: string | null = null;
 
+  // Same-game combos are MLB-only (NRFI/F5 are the only paired team markets with
+  // measurable shared history) — README §15.9 item 1.
+  const tier3 = sport === "mlb" ? SPORT_CFG.mlb.tier3 : null;
+
   try {
-    [saved, tier2Saved, builderRecord, builderRecordDaily] = await Promise.all([
+    [saved, tier2Saved, builderRecord, builderRecordDaily, sameGameSaved] = await Promise.all([
       getSavedBuilderParlays(10, "player", sport),
       getSavedBuilderParlays(10, cfg.tier2, sport),
       getBuilderRecord(sport),
       getBuilderRecordDaily(sport),
+      tier3 ? getSavedBuilderParlays(10, "same_game", sport) : Promise.resolve([]),
     ]);
     // Per-day parlay drill-down. apiGet is server-only, so the client RecordPanel
     // can't lazy-fetch — fetch here and pass a date->parlays map as props. Bounded
@@ -150,13 +168,14 @@ export default async function BuilderPage({
   // timezone math. (The endpoint still returns newest-N regardless of date —
   // Budgerr relies on that, so this stays client-side.)
   const slateOf = (p: { created_at: string }) => p.created_at.slice(0, 10);
-  const latestSlate = [...(saved ?? []), ...(tier2Saved ?? [])].reduce(
+  const latestSlate = [...(saved ?? []), ...(tier2Saved ?? []), ...(sameGameSaved ?? [])].reduce(
     (mx, p) => (slateOf(p) > mx ? slateOf(p) : mx),
     "",
   );
   const onLatestSlate = (p: { created_at: string }) => slateOf(p) === latestSlate;
   const savedLatest = (saved ?? []).filter(onLatestSlate);
   const tier2Latest = (tier2Saved ?? []).filter(onLatestSlate);
+  const tier3Latest = (sameGameSaved ?? []).filter(onLatestSlate);
   const slateLabel = latestSlate
     ? new Date(`${latestSlate}T12:00:00`).toLocaleDateString("en-US", {
         month: "short",
@@ -246,6 +265,20 @@ export default async function BuilderPage({
                 emptyBody={cfg.tier2Empty.body}
               />
             </section>
+
+            {tier3 && (
+              <section className={styles.section} aria-label={tier3.heading}>
+                <div className={styles.sectionHeader}>
+                  <h2 className={styles.sectionTitle}>{tier3.heading}</h2>
+                </div>
+                <p className={styles.tierNote}>{tier3.note}</p>
+                <SameGameList
+                  constructions={tier3Latest}
+                  emptyTitle={tier3.empty.title}
+                  emptyBody={tier3.empty.body}
+                />
+              </section>
+            )}
           </>
         )}
       </div>
