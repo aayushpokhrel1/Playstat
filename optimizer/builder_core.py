@@ -8,6 +8,7 @@ book's de-vigged price is the best-calibrated probability available.
 
 from optimizer.devig import devig
 from optimizer.parlay import american_to_decimal
+from modeling.correlation import pair_joint_prob
 
 # No single leg may be worse than this to hit (de-vigged market probability).
 DEFAULT_FLOOR = 0.55
@@ -173,6 +174,48 @@ def dedupe_by_price(legs):
         if current is None or leg["market_prob"] > current["market_prob"]:
             best[key] = leg
     return list(best.values())
+
+
+def same_game_pairs(team_legs, lift_fn, top_n=10, min_games=500, min_both=50,
+                    warn_below=2000):
+    """Emit one lift-adjusted NRFI+F5 card per game that has both markets.
+
+    team_legs are already normalized, floor-passing builder team legs (favorite
+    side, market_prob >= floor). For each game with both a first_inning_runs and
+    an f5_runs leg, correct the joint by the empirically-measured same-game lift
+    (README §15.9 item 1). combined_odds is the product of the two shopped prices
+    — a NON-PLACEABLE reference (a book same-game parlay is repriced/restricted);
+    the honest quantity is the lift-adjusted joint_prob.
+
+    Sample gate: drop a card whose lift is backed by < min_games games or < min_both
+    joint co-occurrences (a degenerate side/line combo yields a noisy lift). Flag
+    small_sample when lift_n < warn_below (~under one MLB season of shared history).
+    Ranked by lift-adjusted joint_prob desc, top-N.
+    """
+    by_game = {}
+    for leg in team_legs:
+        by_game.setdefault(leg["game_id"], []).append(leg)
+    cards = []
+    for glegs in by_game.values():
+        nrfi = next((l for l in glegs if l["market"] == "first_inning_runs"), None)
+        f5 = next((l for l in glegs if l["market"] == "f5_runs"), None)
+        if nrfi is None or f5 is None:
+            continue
+        lift, lift_n, both_n = lift_fn(nrfi["side"], f5["side"],
+                                       nrfi["line_value"], f5["line_value"])
+        if lift_n < min_games or both_n < min_both:
+            continue
+        joint = pair_joint_prob(nrfi["market_prob"], f5["market_prob"], lift)
+        cards.append({
+            "legs": [nrfi, f5],
+            "combined_odds": nrfi["decimal_odds"] * f5["decimal_odds"],
+            "joint_prob": joint,
+            "lift": lift, "lift_n": lift_n, "both_n": both_n,
+            "small_sample": lift_n < warn_below,
+            "n_legs": 2,
+        })
+    cards.sort(key=lambda c: c["joint_prob"], reverse=True)
+    return cards[:top_n]
 
 
 def _suffix_prod_desc(per_game, n_games):

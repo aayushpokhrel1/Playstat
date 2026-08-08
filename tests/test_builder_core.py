@@ -438,3 +438,71 @@ def test_team_homeaway_leg_has_book_none_in_v1():
         "model_prob": None,
     })
     assert leg["side"] == "home" and leg["american_odds"] == -250 and leg["book"] is None
+
+
+from optimizer.builder_core import same_game_pairs
+
+
+def _tleg(game_id, market, side, prob, dec, line=0.5):
+    return {
+        "game_id": game_id, "market": market, "side": side, "market_prob": prob,
+        "decimal_odds": dec, "american_odds": -120, "line_value": line,
+        "label": f"{market} {side} {line}", "book": None, "kind": "team",
+    }
+
+
+def _lift_fn_stub(lift=1.30, n=2000, both=1000):
+    return lambda sn, sf, nl, fl: (lift, n, both)
+
+
+def test_same_game_pairs_one_card_per_game_with_both_markets():
+    legs = [
+        _tleg(1, "first_inning_runs", "under", 0.56, 1.8, 0.5),
+        _tleg(1, "f5_runs", "under", 0.57, 1.9, 4.5),
+        _tleg(2, "first_inning_runs", "under", 0.55, 1.7, 0.5),  # game 2 missing f5
+    ]
+    cards = same_game_pairs(legs, _lift_fn_stub(), top_n=10)
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["n_legs"] == 2
+    assert c["combined_odds"] == 1.8 * 1.9
+    assert c["lift"] == 1.30 and c["lift_n"] == 2000 and c["both_n"] == 1000
+    # joint = 0.56*0.57*1.30 clamped to <= min(0.56,0.57)
+    assert abs(c["joint_prob"] - 0.56 * 0.57 * 1.30) < 1e-9
+    assert c["small_sample"] is False
+
+
+def test_same_game_pairs_gates_low_sample():
+    legs = [
+        _tleg(1, "first_inning_runs", "under", 0.56, 1.8),
+        _tleg(1, "f5_runs", "under", 0.57, 1.9, 4.5),
+    ]
+    # both_n below floor -> dropped entirely
+    assert same_game_pairs(legs, _lift_fn_stub(n=1000, both=40), min_both=50) == []
+    # n_games below floor -> dropped
+    assert same_game_pairs(legs, _lift_fn_stub(n=400, both=300), min_games=500) == []
+
+
+def test_same_game_pairs_flags_small_sample_but_still_shows():
+    legs = [
+        _tleg(1, "first_inning_runs", "under", 0.56, 1.8),
+        _tleg(1, "f5_runs", "under", 0.57, 1.9, 4.5),
+    ]
+    cards = same_game_pairs(legs, _lift_fn_stub(n=1500, both=700), warn_below=2000)
+    assert len(cards) == 1 and cards[0]["small_sample"] is True
+
+
+def test_same_game_pairs_ranks_by_joint_and_caps_top_n():
+    legs = []
+    for g, (p, dec) in enumerate([(0.56, 1.8), (0.60, 1.8), (0.58, 1.8)], start=1):
+        legs.append(_tleg(g, "first_inning_runs", "under", p, dec))
+        legs.append(_tleg(g, "f5_runs", "under", p, dec, 4.5))
+    cards = same_game_pairs(legs, _lift_fn_stub(), top_n=2)
+    assert len(cards) == 2
+    # highest joint first: game 2 (0.60) then game 3 (0.58)
+    assert cards[0]["legs"][0]["game_id"] == 2
+    assert cards[1]["legs"][0]["game_id"] == 3
+
+
+def test_same_game_pairs_empty_input():
+    assert same_game_pairs([], _lift_fn_stub()) == []
