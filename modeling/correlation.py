@@ -42,10 +42,14 @@ def _game_totals(engine, f5_line):
     return df.dropna(subset=["fi", "f5"])
 
 
-def nrfi_f5_lift(engine, side_nrfi, side_f5, f5_line=4.5, nrfi_line=1.5):
-    """(lift, n_games) for a same-game NRFI-side x F5-side pair from history."""
+def nrfi_f5_lift(engine, side_nrfi, side_f5, nrfi_line, f5_line):
+    """(lift, n_games, both_n) for a same-game NRFI-side x F5-side pair, measured
+    at the pair's ACTUAL market lines (fi line, that game's f5 line) over all
+    box-score history. both_n is the joint "both hit" cell count (sample-gating).
+    """
     df = _game_totals(engine, f5_line)
     n = len(df)
     nrfi_hit = (df["fi"] < nrfi_line) if side_nrfi == "under" else (df["fi"] > nrfi_line)
     f5_hit = (df["f5"] < f5_line) if side_f5 == "under" else (df["f5"] > f5_line)
-    return empirical_lift(int((nrfi_hit & f5_hit).sum()), int(nrfi_hit.sum()), int(f5_hit.sum()), n), n
+    both = int((nrfi_hit & f5_hit).sum())
+    return empirical_lift(both, int(nrfi_hit.sum()), int(f5_hit.sum()), n), n, both
