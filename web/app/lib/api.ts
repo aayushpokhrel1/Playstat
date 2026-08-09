@@ -206,3 +206,33 @@ export function searchBuilder(params: BuilderSearchParams) {
   if (params.sport != null) q.set("sport", params.sport);
   return apiGet<BuilderSearchResult>(`/parlay-builder?${q.toString()}`);
 }
+
+export type LineMovementLeg = {
+  player_id: number | null;
+  game_id: number | null;
+  stat_type: string | null;
+  side: string | null;
+  line: number | null;
+  build_prob: number;
+  close_prob: number;
+  movement_pp: number;
+};
+
+export type LineMovement = {
+  n_legs: number;
+  n_compared: number;
+  coverage: number;
+  mean_movement_pp: number | null;
+  n_toward: number;
+  n_against: number;
+  legs: LineMovementLeg[];
+};
+
+export async function fetchLineMovement(sport = "mlb"): Promise<LineMovement | null> {
+  try {
+    return await apiGet<LineMovement>(`/parlay-builder/line-movement?sport=${sport}`);
+  } catch {
+    // A missing measurement must never break the builder page.
+    return null;
+  }
+}

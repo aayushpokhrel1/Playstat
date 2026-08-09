@@ -1,14 +1,17 @@
 import Link from "next/link";
 import {
+  fetchLineMovement,
   getBuilderRecord,
   getBuilderRecordDaily,
   getDailyParlays,
   getSavedBuilderParlays,
   type DailyParlay,
+  type LineMovement,
   type SavedBuilderParlay,
 } from "../lib/api";
 import BuilderControls from "./BuilderControls";
 import ConstructionList from "./ConstructionList";
+import LineMovementPanel from "./LineMovementPanel";
 import RecordPanel from "./RecordPanel";
 import SameGameList from "./SameGameList";
 import RetryButton from "./RetryButton";
@@ -132,6 +135,7 @@ export default async function BuilderPage({
   let builderRecord;
   let builderRecordDaily;
   let sameGameSaved: SavedBuilderParlay[] = [];
+  let lineMovement: LineMovement | null = null;
   let parlaysByDate: Record<string, DailyParlay[]> = {};
   let fetchError: string | null = null;
 
@@ -140,13 +144,15 @@ export default async function BuilderPage({
   const tier3 = sport === "mlb" ? SPORT_CFG.mlb.tier3 : null;
 
   try {
-    [saved, tier2Saved, builderRecord, builderRecordDaily, sameGameSaved] = await Promise.all([
-      getSavedBuilderParlays(10, "player", sport),
-      getSavedBuilderParlays(10, cfg.tier2, sport),
-      getBuilderRecord(sport),
-      getBuilderRecordDaily(sport),
-      tier3 ? getSavedBuilderParlays(10, "same_game", sport) : Promise.resolve([]),
-    ]);
+    [saved, tier2Saved, builderRecord, builderRecordDaily, sameGameSaved, lineMovement] =
+      await Promise.all([
+        getSavedBuilderParlays(10, "player", sport),
+        getSavedBuilderParlays(10, cfg.tier2, sport),
+        getBuilderRecord(sport),
+        getBuilderRecordDaily(sport),
+        tier3 ? getSavedBuilderParlays(10, "same_game", sport) : Promise.resolve([]),
+        fetchLineMovement(sport),
+      ]);
     // Per-day parlay drill-down. apiGet is server-only, so the client RecordPanel
     // can't lazy-fetch — fetch here and pass a date->parlays map as props. Bounded
     // to the most recent slate days to cap the fan-out as history grows.
@@ -226,6 +232,10 @@ export default async function BuilderPage({
                 daily={builderRecordDaily ?? []}
                 parlaysByDate={parlaysByDate}
               />
+            </section>
+
+            <section className={styles.section} aria-label="Line movement (paper)">
+              <LineMovementPanel data={lineMovement} />
             </section>
 
             <section className={styles.section} aria-label="How to read this">
