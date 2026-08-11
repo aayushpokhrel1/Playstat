@@ -8,3 +8,4 @@ logs/
 api.log
 api.error.log
 graphify-out/
+.env.bak*
