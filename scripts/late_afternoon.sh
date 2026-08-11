@@ -38,7 +38,46 @@ fi
 ODDS_ONLY=0
 [ "${1:-}" = "--odds-only" ] && ODDS_ONLY=1
 
-_step() { local n="$1"; shift; local s; s=$(date +%s); "$@"; local r=$?; echo "=== step $n: $(( $(date +%s) - s ))s rc=$r ==="; return $r; }
+# FRESHNESS WINDOW — SUPPRESS a stale run, do NOT retry it.
+#
+# This is the opposite of daily_chain.sh's catch-up. That job's output (the
+# morning card) is still useful hours late, so it re-runs. THIS job's output is
+# worthless late: a "confirmed lineup" card for games already underway, or a
+# "closing" snapshot taken after the final out. There is nothing to catch up to.
+#
+# launchd fires a missed StartCalendarInterval on WAKE. Observed 2026-08-11: the
+# 08-10 19:45 close job fired at 06:08 the next morning, which (a) captured no
+# closing line at all and (b) burned ~15 SGO entities re-pulling the NEW day's
+# slate that the 08:39 chain then pulled again 2.5h later — a wasted pull and a
+# stray snapshot. Outside its window the job now logs and exits 0 (0 = "nothing
+# to do", not failure; this job is best-effort and must never page).
+if [ "$ODDS_ONLY" = 1 ]; then
+	WINDOW_OPEN="${PLAYSTAT_CLOSE_WINDOW_OPEN:-1945}"
+	WINDOW_CLOSE="${PLAYSTAT_CLOSE_WINDOW_CLOSE:-2230}"
+	WINDOW_NAME="close"
+else
+	WINDOW_OPEN="${PLAYSTAT_LATE_WINDOW_OPEN:-1730}"
+	WINDOW_CLOSE="${PLAYSTAT_LATE_WINDOW_CLOSE:-1900}"
+	WINDOW_NAME="late"
+fi
+now=$((10#$(date +%H%M))) # 10# forces base 10: "0608" is not a valid octal literal
+if [ "$now" -lt "$((10#$WINDOW_OPEN))" ] || [ "$now" -ge "$((10#$WINDOW_CLOSE))" ]; then
+	echo "=== late-afternoon ($WINDOW_NAME): SKIPPED at $(date '+%F %H:%M:%S') — outside ${WINDOW_OPEN}-${WINDOW_CLOSE}; a late run cannot produce a pre-game card or a closing line ==="
+	exit 0
+fi
+
+# Smoke-test hook, mirroring daily_chain.sh's PLAYSTAT_CHAIN_CMD. Without it the
+# only way to exercise the window guard's PASS path is to run the real pull,
+# which spends SGO entities against a metered free tier (done accidentally once,
+# 2026-08-11: 15 entities). With it, both guard paths are testable for free.
+_step() {
+	local n="$1"; shift
+	local s; s=$(date +%s)
+	if [ -n "${PLAYSTAT_LATE_CMD:-}" ]; then eval "$PLAYSTAT_LATE_CMD"; else "$@"; fi
+	local r=$?
+	echo "=== step $n: $(( $(date +%s) - s ))s rc=$r ==="
+	return $r
+}
 
 echo "=== late-afternoon start $(date '+%F %H:%M:%S') (odds_only=$ODDS_ONLY) ==="
 
