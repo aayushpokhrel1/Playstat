@@ -1,30 +1,111 @@
-# Basketball Analytics + Parlay Optimizer — Architecture Plan
+# Playstat — a market-ranked low-risk parlay builder (paper trading)
 
-## 1. Goal
+> **Status: MLB live daily. Paper trading only — nothing here places a real bet.**
+> The original plan below this section was an NBA stat-prediction model; **that
+> model was shelved 2026-07-29 and its code + tables DELETED 2026-08-06.** The
+> product today is the parlay *builder*, which never depended on it. See
+> **§16** for the pivot and **§15** for the builder's full design and build log.
+> §3–§6 are retained as the historical architecture plan, not current behaviour.
 
-A dashboard you check before a night of NBA games that shows:
-- Player/team stats in an easy-to-scan format
-- Model-predicted stat lines (points/rebounds/assists) vs. sportsbook lines
-- Where your model disagrees with the market (the "edge")
-- A suggested parlay for a target payout (e.g. 2x), optimized for the *highest joint probability at that payout* — not a guaranteed win. Parlay math means payout and risk are linked; the optimizer's job is to find the least-bad combination for your target, not to break that relationship.
+## 1. What this actually is
 
-This builds directly on your existing resume project (API-Basketball → PostgreSQL → Tableau), extended with a live-data layer, an odds/lines feed, and a prediction + optimization layer.
+Playstat builds **low-risk parlays out of sportsbook prices**, tracks them in a
+**paper ledger**, and measures — honestly — whether they would have made money.
+
+The core idea in one line: **rank legs by the de-vigged market probability, not
+by a model.** The book's own price, with its margin mathematically removed, is
+the best available estimate of what will happen. The builder's job is to find
+the combination of favourites that reaches a target payout with the highest
+chance of hitting — the *least-bad* combination, not a winner.
+
+**What it does each day (MLB):**
+- Ingests games, box scores and sportsbook lines (player props + game markets).
+- Shops each leg across six books and keeps the best price.
+- Builds cards at 1.4x and 2.0x payout targets, plus a team-market tier and a
+  same-game NRFI+F5 tier.
+- Builds a second, higher-confidence card at 17:30 ET once **lineups are posted**,
+  which cuts legs that would void because the player never appeared.
+- Settles everything against real box scores into a paper ledger.
+- Takes three price snapshots a day so **closing-line movement** is measurable.
+
+### The honest position on profitability
+
+**This is not a money-making system, and the repo does not claim to be one.**
+
+A sportsbook prices both sides to sum to ~107%; that ~7% is its margin, and you
+pay it on every leg. Parlaying **multiplies** it — roughly −7% at one leg, −14%
+at two, −26% at four. Ranking by *safety* picks the least-bad of a pool of
+negative-value bets; it does not create value. Shopping six books recovers only
+about **1.3 points of the ~7** (§15.9 item 10).
+
+The one thing that could change that is a genuine mispricing — and the industry
+test for it is **closing-line value**: does the price we took beat the price at
+game time? As of 2026-08-11 the measurement says **no**: the market has moved
+*against* our selections roughly **2:1** (§15.9 item 12). That is early (n=114)
+but stable. Until it changes, the planned "select only +EV legs" work stays
+**gated and unbuilt**.
+
+So Playstat is best described as an **honest constructor and a measurement
+sandbox**: it is very good at telling you the truth about a betting strategy,
+and the truth right now is that this one has no edge.
+
+### Guardrails (binding — see §15.8)
+
+1. Rank **only** on de-vigged market probability. Never on a model.
+2. **No "+EV" / "edge" / "value" / "beat the market" claims** anywhere — UI, API
+   payloads, or stored JSON.
+3. Always surface joint probability prominently — it *is* the risk.
+4. Favourite-side legs only, `market_prob >= 0.55`, 2–4 legs.
+5. Across-game only, except the one deliberately labelled same-game tier.
+6. **No real-money deployment.**
+
+### Sports
+
+**MLB** is live and produces cards daily. **NFL, NBA, MLS, UCL and NHL** are
+built and structurally verified but gated — NBA/MLS/UCL need a paid stats plan,
+NFL is seasonal, NHL flips on for free at puck-drop (~Oct). See §16.
 
 ---
 
-## 2. System Overview
+## 2. System overview (current)
 
 ```
-API-Basketball ──┐
-                  ├──> Ingestion Layer ──> PostgreSQL ──> Feature Engineering ──> ML Models ──> Edge Calculator ──> Parlay Optimizer ──> Dashboard
-Odds API      ────┘
+statsapi.mlb.com ──┐                              ┌─> paper ledger (settlement)
+API-Sports        ─┤                              │
+api-web.nhle.com  ─┼─> ingestion ─> PostgreSQL ─> builder ─> saved cards ─> dashboard
+SportsGameOdds    ─┘   (games,       (de-vig,     (exact      + Kelly       + record
+                        players,      line         two-axis     stakes        + line
+                        box scores,   shopping)    search)                    movement
+                        odds)
 ```
+
+**Three scheduled jobs** (launchd):
+- `com.playstat.mlb` **08:30 ET** — ingest, build the day's cards, settle.
+- `com.playstat.mlb.late` **17:30 ET** — confirmed-lineup card + 2nd price snapshot.
+- `com.playstat.mlb.close` **19:45 ET** — 3rd price snapshot (closing proxy).
+
+The two later jobs **suppress themselves if they fire late** (a stale card or a
+post-game "closing" line is worthless), and every odds pull is narrowed to the
+current slate to stay inside the free odds-API quota — all three pulls together
+cost less than the single unnarrowed pull they replaced (§15.9 item 11).
+
+**There is no prediction model.** `model_prob` exists in some payloads and is
+always `null`; it is context only and never affects ranking.
 
 ---
 
 ## 3. Data Layer
 
 ### 3.1 Sources
+
+> **CURRENT (2026-08): this list is the original NBA-era plan.** What actually
+> runs today: **`statsapi.mlb.com`** (MLB games, box scores, and posted lineups —
+> free, no key), **SportsGameOdds** (all sports' odds; free tier metered in
+> *entities*, 2,500/month — see §15.9 item 11), **API-Sports** (NBA + soccer,
+> free tier capped at seasons 2022–24, so those sports are gated on a paid plan),
+> and **`api-web.nhle.com`** (NHL, free + current). "Odds API" below was never
+> adopted — SportsGameOdds is the odds feed.
+
 - **API-Basketball** — box scores, player stats, schedules, injury reports (you already have integration experience here)
 - **Odds API** (new) — sportsbook lines for player props (points/rebounds/assists over-under) and moneylines/spreads. This is the piece your original project didn't need since it wasn't betting-focused. Worth a quick search for current options (e.g. The Odds API) before picking one — pricing/coverage changes.
 
@@ -360,7 +441,7 @@ Built and live: 3 MLB seasons + 3 NFL seasons ingested; 13 discrete-distribution
 
 ---
 
-## 15. Low-Risk Parlay Builder — DESIGNED 2026-07-18, NOT YET BUILT
+## 15. Low-Risk Parlay Builder — DESIGNED 2026-07-18, BUILT & LIVE (MLB daily since 2026-07-21)
 
 Full design doc: [`docs/superpowers/specs/2026-07-18-low-risk-parlay-builder-design.md`](docs/superpowers/specs/2026-07-18-low-risk-parlay-builder-design.md). This section is self-contained — a fresh session can go straight from here to `writing-plans` → build without re-brainstorming. **Every decision below is user-confirmed (2026-07-18); do not relitigate them.**
 
