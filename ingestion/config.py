@@ -12,6 +12,10 @@ API_BASKETBALL_BASE_URL = "https://v1.basketball.api-sports.io"
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 ODDS_API_BASE_URL = "https://api.sportsgameodds.com/v2"
 
+# The Odds API (the-odds-api.com) — sharp-reference snapshots (README 15.9 item 14e); a DIFFERENT service from SportsGameOdds above.
+THEODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY")
+THEODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
+
 DATABASE_URL = os.environ["DATABASE_URL"]
 
 # Per-sport config. id_offset namespaces each sport's provider numeric IDs

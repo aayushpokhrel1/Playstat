@@ -88,6 +88,16 @@ _step odds_late "$PY" -m ingestion.odds_ingest --sport mlb --slate-window --not-
 rc=$?
 
 if [ "$ODDS_ONLY" = 1 ]; then
+	# Sharp-reference close snapshot (README §15.9 item 14e): Pinnacle prices
+	# for TODAY'S CARD games only, via The Odds API. Key-gated and NON-FATAL —
+	# the SGO pull above is the product's own snapshot; this is the kill-test
+	# anchor. The module's own --budget-guard skips when the metered free tier
+	# (500 credits/mo) runs low, so a failure here never pages and never
+	# blocks the close.
+	if [ -n "${THE_ODDS_API_KEY:-}" ]; then
+		_step sharp_close "$PY" -m ingestion.sharp_ingest --sport mlb ||
+			echo "=== sharp_close: FAILED (non-fatal) ==="
+	fi
 	echo "=== late-afternoon done (odds only) rc=$rc $(date '+%F %H:%M:%S') ==="
 	exit $rc
 fi
