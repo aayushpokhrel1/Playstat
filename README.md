@@ -228,7 +228,7 @@ cross-session FYI): they fetch `?tier=all&limit=100` ONCE and partition
 client-side by leg kind (player-only → "low-risk" section; team-only → a
 separate "higher-variance" section, log-only, no auto-settle). They verified the
 `?tier=all` player/team partitions are byte-identical to `?tier=player`/`?tier=team`.
-**`GET /parlay-builder/line-movement` (added 2026-08-08) is dashboard-only and ADDITIVE** — `/parlay-builder/saved`, `/box-scores` and `/games` are unchanged. Verified byte-for-byte rather than asserted: `/parlay-builder/saved?tier=all&limit=100` was compared between the live `:8000` (pre-change code) and a spare `:8099` (post-change code) and is **BYTE-IDENTICAL** (103,637 bytes); `/games` likewise byte-identical; `/box-scores` 200 on both.
+**`GET /parlay-builder/line-movement` (added 2026-08-08) is dashboard-only and ADDITIVE** — `/parlay-builder/saved`, `/box-scores` and `/games` are unchanged. **CORRECTION 2026-08-13: "dashboard-only" is a CONVENTION, not a gate.** The endpoint carries no auth distinct from the rest of the app, so any valid `PLAYSTAT_API_KEYS` holder — Budgerr included — can already call it. Left as-is deliberately (adding a gate now would be a behaviour change on a live surface), but it is documented here rather than implied, and Budgerr was told directly rather than being left to discover it. It is still **not** a contract surface: it reports movement across OUR saved cards and is not a lookup keyed to a consumer's stored legs. Verified byte-for-byte rather than asserted: `/parlay-builder/saved?tier=all&limit=100` was compared between the live `:8000` (pre-change code) and a spare `:8099` (post-change code) and is **BYTE-IDENTICAL** (103,637 bytes); `/games` likewise byte-identical; `/box-scores` 200 on both.
 
 So the **`tier` param semantics AND the response shape are now a live contract** —
 treat any change as breaking (additive-only, or ping Budgerr first). They also
@@ -237,6 +237,14 @@ see the additive `home_team`/`away_team`/`player_team_side` leg fields (added
 "today's slate" scoping (§15.10) is done **client-side** in `web/app/builder/`,
 NOT by changing this endpoint's default newest-N-regardless-of-date ordering,
 which Budgerr's partitioning relies on.
+
+**CLV coordination — Budgerr asked 2026-08-13, answered same day: BUILD THE PLUMBING, KEEP THE CONCLUSIONS DARK.** Budgerr's own roadmap carries CLV as "blocked on playstat: needs playstat to store closing lines first". The answer given, and the position we are now held to:
+- **We do not store a closing line and will not claim one.** §15.8 #2 binds us: the last pre-start snapshot lands a median ~100 min (worst ~150) before first pitch. A consumer field named `closing_odds` would describe something we do not have.
+- **Stable enough to build against now** (none of it changes with the finding): the join keys — player `(game_id, player_id, stat_type, line_value)` + side ∈ {over, under}, team `(game_id, market, line_value)` + side ∈ {over, under} for totals / {home, away} for moneyline; the **moved-`line_value`-is-EXCLUDED-not-compared** rule, which a consumer MUST mirror or its numbers silently diverge from ours; the attach surface (builder legs from `/parlay-builder/saved` — the model and `modeling/clv.py` are deleted per §16, so the builder is the only thing being measured); and the 08:30 / 17:30 / 19:45 cadence, which makes a scheduled consumer-side backfill the right pattern over a live read.
+- **NOT settled:** the read surface. No endpoint keyed to a consumer's legs exists; the choice between a lookup endpoint and additive fields on saved legs is deferred until there is data worth reading (lean lookup — the value is unknown at save time and backfilling into the legs JSONB is ugly). Budgerr gets notice before anything ships.
+- **Flagged to them as their own gap, independent of CLV:** their team legs carry `market` but no `game_id`, so nothing joins until they add it.
+- **Naming for the seam:** §15.8 #2 bans EV/edge/value language in our UI, API payloads and JSONB, so anything we ship is named for *movement*, not value.
+- **Why "keep it dark":** as of 2026-08-13 the gate reads ~2:1 against (n=136, coverage 23.2%, 37 toward / 69 against) and the inputs have barely run — see §15.9 item 11 finding (3). If selections do not beat that line, item 12 dies and there may be no value to capture and nothing to display, so a shipped CLV panel would be a panel with no honest content.
 
 ---
 
