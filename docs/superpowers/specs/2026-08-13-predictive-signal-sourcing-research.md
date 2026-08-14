@@ -1,7 +1,12 @@
 # Predictive-signal data sourcing research (§15.9 item 2) — Design Spec
 
-**Date:** 2026-08-13 · **Status:** design approved, research not yet run
+**Date:** 2026-08-13 · **Status:** COMPLETE — **VERDICT: NO-GO** (see §9–§11)
 **Mandate:** RESEARCH ONLY, ending in an explicit go/no-go. **No model code. No restoration of the deleted model.**
+
+> **Verdict in one line:** all six candidate signal families are available for **$0**,
+> and **none of them survives contact with the market**. Sourcing was never the
+> gate; the data simply is not worth what it would cost to use. **Do not rebuild
+> the model.**
 
 ---
 
@@ -237,3 +242,200 @@ Nothing else lands. No repo code, no migration, no endpoint, no chain step.
   appetite for good news. Mitigation: the bar is pre-registered above, before any fitting.
 - **Survivorship in the lined window.** The 336 lined games are the slates the builder
   actually ran on, not a random sample. Note it; do not correct for it silently.
+
+---
+
+# FINDINGS (research executed 2026-08-13)
+
+## 9. Stage 1 — sourcing: all six families cost $0
+
+The sourcing question, which item 2 framed as the main unknown, turned out to be
+nearly a non-question. Five families live in **one free, key-less endpoint the
+project already calls** — `statsapi.mlb.com/api/v1.1/game/{pk}/feed/live` — at
+**13.5 KB/game** with `?fields=` pruning (60× smaller than the 814 KB raw feed).
+
+The full 3-season spine (**6,682 games**) pulled in ~4 minutes for ~87 MB, with
+**100% field population on every field in every season**: venue, temperature, wind
+speed, wind direction, condition, home-plate umpire, day/night, first pitch, and
+full 9-man batting orders on both sides. 41 venues, **99 distinct home-plate
+umpires**, 11 wind-direction categories.
+
+- **Park factors** are **derived from our own 6,682 games**, not sourced. This is
+  better than an external feed, not a fallback: nobody publishes **F5 or
+  first-inning** park factors, and those are the markets the builder actually bets.
+  The derivation validates against known baseball reality — Coors Field F5 = **1.32**,
+  T-Mobile Park = **0.79**, Sutter Health Park = **1.23**.
+- **Statcast** is free and needs no key. Raw `launchSpeed`/`launchAngle` and
+  `startSpeed`/`spinRate` are already inside the same `feed/live` we call
+  (independently verified); Savant is needed only for computed metrics (xwOBA,
+  barrel rate), available as one-request player-season leaderboard CSVs.
+- **Licensing** is unchanged from what the project already operates under (MLB
+  personal/non-commercial). Fine for internal paper research; not for anything
+  productized or redistributed.
+
+**No paid option surfaced for any family. There was nothing to escalate.**
+
+### Traps found while probing (all real, all silent)
+
+- The umpire is in `liveData.boxscore.officials`. **`gameData.officials` is an empty
+  array** — reading the docs yields "not available".
+- Baseball Savant's CSV export **silently caps at ~25,000 rows**: HTTP 200,
+  well-formed CSV, just short. Same failure class as the "100% coverage" metric
+  that compared prices to themselves.
+- A wrong Savant leaderboard field name **returns 200 with blank values**, not an error.
+- Savant catcher-framing CSV exports have **blank id/name columns** — metric exists,
+  export is broken.
+- **The `+100,000,000` id-offset trap bit this analysis directly.** StatsAPI
+  `battingOrder` returns RAW player ids; our DB stores MLB players offset by +100M
+  (`ingestion/config.py`). The un-offset join matched **zero** rows, produced an
+  all-NaN feature, and the lineups family was silently dropped as "no usable
+  features" on the first run. After the fix the join matches **90.6%** of 120,276
+  slots — and lineups became the *strongest* family in the study. Every id join in
+  this research prints a match-rate diagnostic because of this.
+
+## 10. Stage 2 — incremental R² over a rolling-form baseline
+
+Train 2024+2025, score 2026. Ridge primary, GBM as nonlinearity check. 95% CI from
+day-clustered block bootstrap. Baseline = team rolling scored/allowed + starter form
+(deliberately the deleted model's own feature class).
+
+**Baseline out-of-sample R²: 0.0051 (NRFI) / 0.0110 (F5) / 0.0108 (full-game)** —
+an independent replication of §11's F5 finding (recorded there as R²=0.007).
+
+### Run environment (n_test = 1,747)
+
+| Family | NRFI | F5 runs | Full-game runs |
+|---|---|---|---|
+| **lineups** | −0.12pp | **+1.64pp** `[+0.68,+2.57]` | **+2.19pp** `[+1.29,+3.10]` |
+| **park** | +0.07pp | **+0.87pp** `[+0.18,+1.56]` | **+1.00pp** `[+0.39,+1.63]` |
+| weather | +0.12pp | +0.28pp (ns) | +0.90pp `[−0.04,+1.80]` |
+| **umpire** | +0.01pp | +0.02pp | +0.05pp (ns) |
+| bullpen | −0.04pp | −0.10pp | −0.16pp |
+| ALL | −0.58pp | +2.09pp | **+3.23pp** `[+1.17,+5.42]` |
+
+### Player props (n_test 29.9k–36.1k batters; 3,072–3,201 starters)
+
+Baselines: batter_strikeouts +0.0472, hits +0.0249, total_bases +0.0207,
+home_runs +0.0121, pitcher_strikeouts +0.1442.
+
+| Family | batter K | hits | total bases | home runs | pitcher K |
+|---|---|---|---|---|---|
+| **umpire** | **−0.0001** | −0.0000 | −0.0000 | −0.0000 | **−0.0003** |
+| lineup slot | +0.0013 | +0.0017 | +0.0025 | +0.0012 | n/a |
+| park | +0.0015 | +0.0023 | +0.0020 | +0.0009 | +0.0041 |
+| weather | −0.0001 | +0.0009 | +0.0018 | +0.0016 | −0.0015 |
+| opp quality | +0.0049 | +0.0015 | +0.0015 | +0.0007 | **+0.0180** |
+
+**Nothing clears the 1% bar on a CI-lower-bound basis anywhere in the prop track.**
+The team-level signal does not carry down to player level: `park` is +1.00pp on
+full-game runs but +0.09–0.41pp on props; `lineups` is +2.19pp there but
++0.12–0.25pp here. The player's own rolling form already absorbs it.
+
+**The GBM never beat Ridge** on any target (full-game 0.0295 vs 0.0345; F5 0.0042 vs
+0.0216; pitcher K 0.1497 vs 0.1637) — independent confirmation of §11's
+"a stronger model made R² worse."
+
+### The umpire is not weak — it is absent
+
+Variance decomposition over 6,682 games and 84 umpires with ≥40 games:
+
+| | |
+|---|---|
+| Observed sd of per-umpire mean strikeouts | **0.476** |
+| sd expected from sampling noise if all umpires were **identical** | **0.480** |
+| Variance-corrected true between-umpire sd | **0.000 K/game** |
+| Implied maximum R² from umpire identity | **0.00000** |
+
+The observed spread is *below* the pure-noise expectation. CB Bucknor's 17.6 K/game
+against James Jean's 15.3 is entirely explained by which games they were assigned.
+**Four independent measurements agree** (team runs +0.0005, batter K −0.0001,
+pitcher K −0.0003, variance decomposition 0.00000). The best-documented umpire
+effect in baseball does not exist in three seasons of our data.
+
+## 11. Stage 3 — the decisive test: does anything beat the MARKET?
+
+Forecast-encompassing regression `y = a + b·MARKET + c·f` on the lined window. The
+market basis is deliberately **flexible** (line, p, p², p³, logit p, −ln(1−p)) so
+that no result can come from functional-form arbitrage — for a count outcome the
+market-implied mean is convex in p, and a linear-only basis manufactures fake edge.
+
+| Target | n | R² market | R² market+ours | c | 95% CI | Verdict |
+|---|---|---|---|---|---|---|
+| **F5 runs** | 294 | +0.0518 | +0.0554 | +0.260 | `[−0.224,+0.781]` | **market encompasses** |
+| **pitcher K** | 530 | **+0.2381** | +0.2406 | +0.311 | `[−0.050,+0.682]` | **market encompasses** |
+| NRFI | 306 | +0.0261 | +0.0523 | +0.939 | `[+0.416,+1.520]` | anomaly — see below |
+
+Two results deserve emphasis:
+
+- **`park` and `lineups` cleared Stage 2 and are fully absorbed by the market.**
+  Predicted in advance, and it happened: they are the two variables a book prices
+  most explicitly — lineups are *literally why* books hold props until lineups post.
+- **On pitcher strikeouts the market beats our best model outright** — market alone
+  R² **0.2381** vs our model's **0.1610**. `opp_quality`'s +1.80pp over our own
+  baseline collapses to **+0.25pp** over the market, CI containing zero.
+
+### The NRFI anomaly, and why it is NOT a go
+
+NRFI is the one cell where `c` separates from zero. It fails the pre-registered rule,
+and the reason matters:
+
+1. **It fails the first conjunct.** Stage 2 measured every family on NRFI at ≈0 or
+   negative (`ALL` = **−0.58pp**). The GO condition requires clearing the bar over
+   baseline **and** surviving the market. It never cleared the bar.
+2. **The decomposition inverts the innocent explanation.** Baseline-only is
+   encompassed (c=+0.607, CI `[−0.774,+2.077]`); the effect appears only when the new
+   families are added — the same families Stage 2 measured as *harmful* on this target.
+3. **The model is worse overall on the very window that shows the effect**: raw OOS
+   R² is **−0.0041** across full-2026 but **+0.0134** on this 4-week slice. Features
+   that hurt prediction in general cannot be a genuine source of market-beating
+   information on a subset. That is a lucky window.
+4. **It contradicts the sharp reference.** §15.9 item 14e reads **8 of 8**
+   `first_inning_runs` legs *below* Pinnacle fair (mean `fair_ratio` 0.9583). If we
+   truly had NRFI edge, the sharp book should agree with us more than the soft books
+   do, not less.
+5. **Multiplicity.** This is one significant cell among ~30 tested.
+
+Recorded as an **anomaly for a forward-only, pre-registered re-test**, never acted on.
+This is item 14d's "small-n tails" trap in new clothes, and item 13's error in a new
+costume; the conjunctive rule was pre-registered precisely to catch it.
+
+## 12. VERDICT — NO-GO
+
+**No family, on any target, clears the pre-registered bar and survives the market.**
+
+| Family | Outcome |
+|---|---|
+| umpire | **Dead.** Effect is absent, not weak — true between-umpire variance is 0.000. |
+| bullpen | **Dead.** Negative incremental R² on every run-environment target. |
+| weather | Below bar except full-game runs, where the CI touches zero. |
+| park | Clears Stage 2 (+1.00pp) → **fully absorbed by the market.** |
+| lineups | Strongest in Stage 2 (+2.19pp) → **fully absorbed by the market.** |
+| Statcast | Free and available; not reached — every cheaper family was absorbed first, and season-aggregate leakage makes it usable only as a lagged feature. **The one honest gap in this pass.** |
+
+**This is a no-go on the merits, not on cost.** Every family is free and already
+licensed; the sourcing question item 2 was written to answer came back entirely
+positive. The data exists, we can have all of it for nothing, and it still does not
+beat the book. That is a much stronger result than "we couldn't afford the data."
+
+**§11's acceptance test is not close to being met.** Our F5 forecast tracks the book
+line with slope **+0.460** — better than the deleted model's 0.185, still nowhere near
+1 — and on NRFI the slope is **+0.007**, i.e. our forecast and the market are
+essentially unrelated.
+
+**Recommendation: do not rebuild the model.** The builder remains the product;
+`model_prob` stays `None`. Per §16 nothing live depends on this, so the cost of this
+verdict is zero.
+
+### What would change the answer
+
+Stated so a future session does not re-run this pass hoping for a different result:
+
+1. **Statcast measured properly** as a lagged rolling feature (the honest gap above).
+   Expected to fail for the same reason everything else did — it is the *most* widely
+   consumed public baseball data, so it is the most likely to be priced already.
+2. **A market that is actually soft.** Every test here says these six books price
+   park, lineups, weather and pitcher quality correctly. The binding constraint is
+   §15.9 item 12's ceiling, not our feature set.
+3. **Not** more tuning (§11 falsified it, and this pass re-falsified it — the GBM
+   lost every time), and **not** more line history to re-test the NRFI anomaly. Both
+   were pre-registered as no-go outcomes.
