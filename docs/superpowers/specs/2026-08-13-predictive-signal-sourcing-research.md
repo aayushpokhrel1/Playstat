@@ -410,7 +410,7 @@ costume; the conjunctive rule was pre-registered precisely to catch it.
 | weather | Below bar except full-game runs, where the CI touches zero. |
 | park | Clears Stage 2 (+1.00pp) → **fully absorbed by the market.** |
 | lineups | Strongest in Stage 2 (+2.19pp) → **fully absorbed by the market.** |
-| Statcast | Free and available; not reached — every cheaper family was absorbed first, and season-aggregate leakage makes it usable only as a lagged feature. **The one honest gap in this pass.** |
+| Statcast | **GAP CLOSED 2026-08-14 — see §13.** Measured as a lagged rolling feature. Genuinely real signal (every prop coefficient significant at P=1.00) but an order of magnitude too small: max +0.70pp, below the 0.77% break-even. **Degrades** the forecast on both markets we actually bet. |
 
 **This is a no-go on the merits, not on cost.** Every family is free and already
 licensed; the sourcing question item 2 was written to answer came back entirely
@@ -430,12 +430,90 @@ verdict is zero.
 
 Stated so a future session does not re-run this pass hoping for a different result:
 
-1. **Statcast measured properly** as a lagged rolling feature (the honest gap above).
+1. ~~**Statcast measured properly** as a lagged rolling feature (the honest gap above).
    Expected to fail for the same reason everything else did — it is the *most* widely
-   consumed public baseball data, so it is the most likely to be priced already.
+   consumed public baseball data, so it is the most likely to be priced already.~~
+   **DONE 2026-08-14 — §13. It failed, exactly as predicted. This route is closed.**
 2. **A market that is actually soft.** Every test here says these six books price
    park, lineups, weather and pitcher quality correctly. The binding constraint is
    §15.9 item 12's ceiling, not our feature set.
 3. **Not** more tuning (§11 falsified it, and this pass re-falsified it — the GBM
    lost every time), and **not** more line history to re-test the NRFI anomaly. Both
    were pre-registered as no-go outcomes.
+
+---
+
+# 13. Stage 4 — STATCAST: the gap is now CLOSED (2026-08-14)
+
+§12 listed Statcast as "the one honest gap in this pass". It was measured the next
+day. **It does not change the verdict.**
+
+**Sourcing.** 558 game-days pulled from Baseball Savant's `statcast_search/csv`
+day-slice endpoint, aggregated to player-game as it went (raw pitches discarded):
+**134,838 batter-games + 57,056 pitcher-games in 15 minutes, $0, no key.** Those
+counts match our DB's own 134,647 / 56,974 almost exactly — an independent coverage
+check. Day-slicing also sidesteps the ~25,000-row silent export cap (§9) entirely,
+since a full MLB day is ~4,200 rows. Join rates: **95.1%** batter-games, **93.8%**
+pitcher-games, **91.5%** of lineup slots.
+
+**Leakage discipline.** Statcast enters ONLY as a prior-rolling feature (25 games
+batters / 10 appearances pitchers). Using a game's own exit velocities to predict
+that game is leakage, and a player-season leaderboard aggregate silently contains
+the game being predicted — which is why the cheap leaderboard route was rejected in
+favour of the per-day pull.
+
+### Stage 2 — incremental R² over the same baselines
+
+| Target | Δ | 95% CI | vs 1% bar |
+|---|---|---|---|
+| batter_strikeouts | +0.70pp | `[+0.54,+0.85]` | below |
+| home_runs | +0.34pp | `[+0.21,+0.46]` | below |
+| total_bases | +0.16pp | `[+0.06,+0.26]` | below |
+| hits | +0.14pp | `[+0.07,+0.22]` | below |
+| pitcher_strikeouts | +0.12pp | `[+0.07,+0.18]` | below |
+| `total_r1` (NRFI) | +0.04pp | `[−0.38,+0.48]` | below, ns |
+| `total_f5` | +0.61pp | `[−0.49,+1.75]` | below, **ns** |
+| **`total_runs`** | **+1.63pp** | `[+0.45,+2.77]` | **point estimate clears** |
+
+Every prop coefficient is significant at P=1.00 — **Statcast is genuinely real
+signal, it is simply too small to clear the vig.** The largest (batter strikeouts,
++0.70pp) sits below the 0.77% break-even bar.
+
+*(Caveat, stated rather than buried: the `pitcher_strikeouts` baseline reads +0.5716
+here versus +0.1442 in §10, because this frame includes RELIEVERS (56,547 rows) while
+§10 used starters only (13,343). The gap is between-role variance — relievers throw
+1–2 innings — which the market obviously knows. The two are not comparable; the
+Statcast delta of +0.12pp is unaffected either way.)*
+
+### The one above-bar cell is a market we do not bet
+
+`total_runs` (full-game) is the only cell clearing the Stage 2 bar. **We store no
+full-game total lines at all** — `game_lines` holds only `first_inning_runs` (597) and
+`f5_runs` (523), for MLB or any sport. So this cell **cannot be Stage-3 tested with
+stored data**, and under the pre-registered conjunctive rule an untested Stage 3 is
+not a go.
+
+That is "untestable", not "absorbed" — an honest distinction. But the read-across is
+strongly negative: **F5 is a strictly less liquid, less efficiently priced market than
+the full-game total, and Statcast fails there** (+0.61pp, not significant). A signal
+that cannot beat the softer line is very unlikely to beat the sharper one.
+
+### Stage 3 — on the markets we DO bet, Statcast makes things worse
+
+| Target | model OOS R² | + Statcast | market verdict |
+|---|---|---|---|
+| `total_f5` | +0.0216 | **+0.0137** | **encompasses** (c CI `[−0.205,+0.654]`) |
+| `total_r1` | −0.0041 | **−0.0198** | anomaly **weakens**, c 0.939 → **0.641** |
+
+Adding Statcast **degrades the forecast on both markets we actually bet**, and the
+market still encompasses F5. Notably it also **weakens the NRFI anomaly** while making
+the model worse — a genuine signal strengthens with better data; an overfit artifact
+degrades. That is independent support for §11's lucky-window reading of that anomaly.
+
+### Verdict unchanged
+
+**NO-GO stands, and is now stronger.** The best free predictive data in baseball is
+measurably real, entirely affordable, and still an order of magnitude short of the
+vig on every market this project prices. §12's "one honest gap" is closed; the
+prediction recorded there — that Statcast would fail because it is the most widely
+consumed public baseball data and therefore the most thoroughly priced — held.
