@@ -69,7 +69,7 @@ class SportsGameOddsClient:
         window. This is a QUOTA control, not a convenience: the free tier meters
         entities (1 returned event = 1 entity, 2,500/month) and an unfiltered MLB
         pull returns ~51 events, ~70% of them future-dated games the builder
-        discards. See ingestion/slate_window.py and README §15.9 item 11.
+        discards. See ingestion/slate_window.py and docs/FINDINGS.md finding 3.
 
         limit sets the page size; limit=100 makes a narrowed slate fit in ONE
         request instead of paging at 6.5s/request (the 2026-08-08 odds step took

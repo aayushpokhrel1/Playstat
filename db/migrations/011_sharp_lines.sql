@@ -1,5 +1,5 @@
 -- 011: sharp_lines — sharp-reference (Pinnacle) close snapshots.
--- README §15.9 item 14e / spec docs/superpowers/specs/2026-08-11-sharp-reference-snapshot-design.md
+-- docs/FINDINGS.md finding 6 / spec docs/superpowers/specs/2026-08-11-sharp-reference-snapshot-design.md
 --
 -- Append-only, same conventions as prop_lines/game_lines: our game_id/player_id
 -- id space, our market vocabulary, American odds in side-pair columns

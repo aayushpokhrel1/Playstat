@@ -1,6 +1,6 @@
 """De-vigging: turning a two-sided American price into fair probabilities.
 
-Extracted from the now-deleted modeling/edges.py (README §16 / #3B model
+Extracted from the now-deleted modeling/edges.py (PRODUCT.md / #3B model
 teardown, 2026-08-06) because the market-ranked low-risk builder
 (optimizer/builder_core.py) ranks legs on the de-vigged MARKET probability and
 so depends on these two pure functions — they were never model-specific. Pure

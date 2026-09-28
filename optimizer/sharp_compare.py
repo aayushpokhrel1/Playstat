@@ -1,4 +1,4 @@
-"""Booked builder legs vs the sharp reference close (README §15.9 item 14e).
+"""Booked builder legs vs the sharp reference close (docs/FINDINGS.md finding 6).
 
 The kill test the sharp snapshots exist for, in two numbers per leg:
 
@@ -13,7 +13,7 @@ HONESTY RULES, inherited from optimizer/line_movement.py:
   - a one-sided row cannot be de-vigged and is excluded;
   - coverage is first-class output — a low comparable rate is itself a finding.
 
-CLI REPORT ONLY (§15.8 #2 by construction): this module feeds no API endpoint,
+CLI REPORT ONLY (PRODUCT.md guardrails #2 by construction): this module feeds no API endpoint,
 no dashboard, and writes nothing. The verdict is for the operator.
 """
 

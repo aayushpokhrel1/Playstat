@@ -63,7 +63,7 @@ SPORTS = {
     # (nfl_backfill), so NFL PHYSICALLY sits at ~402M+ (2023) and climbs +0.1M/season,
     # squatting in the 400M band despite its +200M label. +400M UCL would collide with
     # NFL once raw fixture ids pass ~2.3M (imminent in the live era); +500M clears NFL's
-    # whole realistic span (200M+2099*1e5 ≈ 410M < 500M). See README §11. (2026-08-05)
+    # whole realistic span (200M+2099*1e5 ≈ 410M < 500M). See docs/ARCHITECTURE.md. (2026-08-05)
     "ucl": {
         "base_url": "https://v3.football.api-sports.io",
         "league_id": 2,
@@ -78,7 +78,7 @@ SPORTS = {
     # (season*1e6+...), already above every band and fitting INT4 (2.147e9) with no
     # room for a positive offset. nhl_backfill stores game_id = 1e9 + (raw - 2e9)
     # (see NHL_GAME_ID_EPOCH there); teams/players are 1e9 + raw. 1B clears NFL's
-    # real 400-420M span + UCL 500M and stays under INT4. See README §11 / §16.4.
+    # real 400-420M span + UCL 500M and stays under INT4. See docs/ARCHITECTURE.md.
     "nhl": {
         "odds_league_id": "NHL",
         "id_offset": 1_000_000_000,

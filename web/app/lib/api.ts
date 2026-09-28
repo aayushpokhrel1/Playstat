@@ -33,7 +33,7 @@ export type BuilderLeg = {
   odds: number;
   market_prob: number;
   model_prob: number | null;
-  // Best-price bookmaker for the shopped odds (line shopping, §15.9 item 3);
+  // Best-price bookmaker for the shopped odds (line shopping, docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md);
   // null when unshopped (consensus price) or for legacy rows.
   book: string | null;
   home_team: string | null;
@@ -59,7 +59,7 @@ export type SavedBuilderParlay = BuilderConstruction & {
   parlay_id: number;
   created_at: string;
   target_payout: number;
-  // Same-game combos (README §15.9 item 1). Present only on the same_game tier;
+  // Same-game combos (docs/superpowers/specs/2026-08-07-same-game-combos-design.md). Present only on the same_game tier;
   // null/false everywhere else. `lift` is the measured same-game dependence
   // (observed / independent product) at the pair's actual lines+sides, `lift_n`
   // the games behind it, `both_n` the joint "both hit" count, and small_sample
@@ -77,7 +77,7 @@ export type BuilderRecord = {
   wins: number;
   losses: number;
   pushes: number;
-  staked: number; // sum of ¼-Kelly stakes (README §15.9 item 4)
+  staked: number; // sum of ¼-Kelly stakes (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md)
   pnl: number;
   roi: number; // pnl / staked (stake-weighted)
 };
@@ -88,7 +88,7 @@ export type BuilderRecordDaily = {
   wins: number;
   losses: number;
   pushes: number;
-  staked: number; // sum of ¼-Kelly stakes (README §15.9 item 4)
+  staked: number; // sum of ¼-Kelly stakes (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md)
   pnl: number;
   roi: number; // pnl / staked (stake-weighted)
 };
@@ -164,14 +164,14 @@ export function getPlayerStats(playerId: number) {
   return apiGet<GameLogEntry[]>(`/players/${playerId}/stats`);
 }
 
-// Dashboard-only builder record split by tier + target payout (README §15).
+// Dashboard-only builder record split by tier + target payout (PRODUCT.md).
 // sport is additive (default "mlb", NFL builder chain #4a/#4b) — existing
 // callers passing no sport keep getting exactly MLB rows, unchanged.
 export function getBuilderRecord(sport = "mlb") {
   return apiGet<BuilderRecord[]>(`/parlay-builder/record?sport=${sport}`);
 }
 
-// Per-day drill-down of the same settled-builder data (README §15 follow-on).
+// Per-day drill-down of the same settled-builder data (PRODUCT.md follow-on).
 export function getBuilderRecordDaily(sport = "mlb") {
   return apiGet<BuilderRecordDaily[]>(`/parlay-builder/record/daily?sport=${sport}`);
 }
@@ -184,7 +184,7 @@ export function getDailyParlays(date: string, sport = "mlb") {
   );
 }
 
-// tier is additive (README §15 Change 3): "player" is the default and
+// tier is additive (PRODUCT.md Change 3): "player" is the default and
 // matches today's exact saved shape (the mixed player+team across-game
 // tier); "team" is the new dedicated, higher-variance NRFI/F5-only tier,
 // which may legitimately be empty on any given slate; "game" is the NFL

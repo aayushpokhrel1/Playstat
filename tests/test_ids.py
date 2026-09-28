@@ -63,7 +63,7 @@ def test_team_index_is_deterministic_and_1_based():
 
 def test_team_index_raises_clear_error_on_relocation_alias():
     # OAK/SD/STL are pre-2016 relocation aliases deliberately unsupported by
-    # this path (module docstring, README §13.1).
+    # this path (module docstring, docs/ARCHITECTURE.md).
     for alias in ("OAK", "SD", "STL"):
         with pytest.raises(ValueError, match="relocation"):
             _team_index(alias)

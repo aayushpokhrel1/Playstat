@@ -10,7 +10,7 @@ def test_ucl_config_entry():
 
 
 def test_ucl_offset_clears_nfls_real_game_id_band():
-    """Guard against the NFL/UCL id collision (README §11). NFL's game_id is
+    """Guard against the NFL/UCL id collision (docs/ARCHITECTURE.md). NFL's game_id is
     `200M + season*100000 + week*1000 + ...` (ingestion/nfl_backfill._game_id_map),
     so NFL PHYSICALLY occupies ~402M (season 2023) and climbs +0.1M/season — it
     squats in the 400M band despite its +200M offset label. UCL = 500M + raw

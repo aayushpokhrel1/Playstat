@@ -6,7 +6,7 @@ very different bets: the ~67%-to-hit 1.4x player parlays, the ~50%-to-hit
 2.0x player parlays, and the team tier. This endpoint returns one row per
 (tier, target_payout) instead, so the dashboard can render them separately.
 
-Row shape carries `staked` (sum of Kelly stakes, README §15.9 item 4) before
+Row shape carries `staked` (sum of Kelly stakes, docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md) before
 pnl; ROI is pnl/staked (stake-weighted), not pnl/n — variable Kelly stakes
 would otherwise aggregate wrong.
 
@@ -252,7 +252,7 @@ def test_record_sql_has_sport_coalesce_filter():
 
 
 def test_record_sql_sums_stake_for_stake_weighted_roi():
-    # README §15.9 item 4: variable Kelly stakes -> ROI must be pnl/SUM(stake).
+    # docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md: variable Kelly stakes -> ROI must be pnl/SUM(stake).
     for fn in (api_main.builder_record, api_main.builder_record_daily):
         src = inspect.getsource(fn)
         assert "sum(ro.stake)" in src

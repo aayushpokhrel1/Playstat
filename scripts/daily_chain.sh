@@ -81,20 +81,20 @@ run_chain() {
 		eval "$PLAYSTAT_CHAIN_CMD"
 		return $?
 	fi
-	# Order matters (reordered 2026-07-24 §15.9; model pipeline SHELVED 2026-07-29
-	# §16 — see the frozen block below). The low-risk builder ranks on de-vigged
+	# Order matters (reordered 2026-07-24 PRODUCT.md roadmap; model pipeline SHELVED 2026-07-29
+	# PRODUCT.md — see the frozen block below). The low-risk builder ranks on de-vigged
 	# MARKET odds and needs ONLY games + prop_lines + game_lines (model_prob was
 	# always a context-only LEFT JOIN, never used for ranking), so it never depended
 	# on the model steps — dropping them changes nothing about the card. The four
 	# builder --save steps run right after their single ingestion dep, odds_ingest
 	# (it writes both prop_lines and the NRFI/F5 game_lines the builder reads).
 	# Saved rows carry model_prob=None (dashboard shows "model: — (not used for
-	# ranking)") — the `edges`/`game_edges` tables are gone (§16/#3B) so it is
+	# ranking)") — the `edges`/`game_edges` tables are gone (PRODUCT.md/#3B) so it is
 	# always None now. The old `first_inning` step (wrote game_predictions, a
 	# now-dropped table read by nothing) was removed 2026-08-06 with the model
 	# code — it never fed the builder (a mistaken KEEP in the #3B spec).
 	# settle is independent of the builder.
-	# Per-step timing (2026-07-24, README §15.9 item 7 B). Profiling ruled out
+	# Per-step timing (2026-07-24, docs/OPERATIONS.md B). Profiling ruled out
 	# feature-compute (~77s) and model-training (~2s/stat) as the cause of the
 	# ~7-8h runtime; the feature UPSERT (2.3M immutable rows) is >10min and a big
 	# chunk is still unaccounted (likely the ingestion/API steps). _step logs each
@@ -117,7 +117,7 @@ run_chain() {
 	# Called best-effort (see the chain below): an NFL failure is logged but never
 	# aborts the MLB chain or pages — NFL is secondary/seasonal, live at preseason (~Aug).
 	# MLB-ONLY odds (2026-08-07, user-chosen SGO free-tier quota conservation — README
-	# §15.9 item 3 note). The non-MLB SGO odds pulls drain the shared 2,500-object/mo
+	# docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md note). The non-MLB SGO odds pulls drain the shared 2,500-object/mo
 	# free budget; they are gated off here so the monthly quota goes to MLB (the only
 	# sport reliably producing cards). Reversible with NO code edit: run the chain with
 	# PLAYSTAT_MLB_ONLY_ODDS=0 to restore full multi-sport odds. The *_scores steps stay
@@ -202,7 +202,7 @@ run_chain() {
 		_step builder_2.0      "$PY" -m optimizer.builder --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --min-start-rate 0.65 --save &&
 		_step builder_team_1.4 "$PY" -m optimizer.builder --team-only --target-payout 1.4 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
 		_step builder_team_2.0 "$PY" -m optimizer.builder --team-only --target-payout 2.0 --tolerance 0.10 --top-n 5 --max-leg-reuse 2 --save &&
-		# Same-game NRFI+F5 combos (README §15.9 item 1) — the labelled exception to
+		# Same-game NRFI+F5 combos (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) — the labelled exception to
 		# the across-game-only guardrail. Pins no payout axis (one card per eligible
 		# game). Non-fatal: this class is empty most nights (both markets must clear
 		# the 0.55 floor in the SAME game), and it must never block the player card.
@@ -221,7 +221,7 @@ run_chain() {
 		{ _step_retry ucl_scores "$PY" -m ingestion.soccer_backfill --sport ucl --season 2024 --only fixtures || echo "=== ucl_scores: FAILED (non-fatal) ==="; } &&
 		{ _nhl_daily_build || echo "=== nhl daily build: FAILED (non-fatal, MLB chain continues) ==="; } &&
 		{ _step_retry nhl_scores "$PY" -m ingestion.nhl_backfill --only games || echo "=== nhl_scores: FAILED (non-fatal) ==="; } &&
-		# Kelly stake sizing (README §15.9 item 4): size the WHOLE date's builder
+		# Kelly stake sizing (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md): size the WHOLE date's builder
 		# rows once all sport builds are done, before settle. ¼-Kelly on the
 		# line-shopping edge + a 5u same-night exposure cap; idempotent. NULL stays
 		# on any card built after this (none, in MLB-only) -> settle falls back to 1u.
@@ -237,7 +237,7 @@ run_chain() {
 	_step settle           "$PY" -m modeling.settle
 	settle_rc=$?
 	[ "$core_rc" -eq 0 ] && [ "$settle_rc" -eq 0 ]
-	# MODEL PIPELINE DELETED 2026-08-06 (README §16, roadmap #3B, user-approved).
+	# MODEL PIPELINE DELETED 2026-08-06 (PRODUCT.md, roadmap #3B, user-approved).
 	# The model was shelved 2026-07-29 (frozen steps commented out here) and then
 	# DELETED — the four steps (features/predict_upcoming/edges/backtest) and their
 	# modules/tables are gone, along with the clv step. The market-ranked builder
@@ -250,16 +250,16 @@ run_chain() {
 }
 # The old `optimizer.parlay --target-payout 2.0 --max-legs 3` step lived here and
 # OOM-died (SIGKILL) nightly — 1,060 edges > 3% meant C(1060,3) ~ 198M combinations
-# (README §11). It is replaced, not patched, by optimizer.builder: a bounded,
+# (docs/ARCHITECTURE.md). It is replaced, not patched, by optimizer.builder: a bounded,
 # game-structured search that ranks on de-vigged MARKET probability rather than
 # model probability. Two targets are recorded each night so the paper ledger
-# accumulates at both risk levels — ~1.4x "safe" and ~2.0x "reach" (README §15.3).
+# accumulates at both risk levels — ~1.4x "safe" and ~2.0x "reach" (PRODUCT.md).
 # Tolerance is tightened to 0.10 (default 0.15) because ranking by joint
 # probability always returns the least-risky end of the band, so a wide band
-# records a bet well below its nominal target (README §15.10).
+# records a bet well below its nominal target (docs/ARCHITECTURE.md).
 #
 # The two --team-only builds add a dedicated, separately-tracked team tier
-# (README §15.9 item 5 / §15.10 team-legs note): NRFI/F5 markets price near
+# (PRODUCT.md / docs/ARCHITECTURE.md team-legs note): NRFI/F5 markets price near
 # coin-flip and are structurally out-competed by player-prop favorites in the
 # mixed pool above, so team legs almost never surfaced there. This tier can
 # legitimately find nothing on a given slate (`optimizer.builder` prints "no

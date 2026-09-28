@@ -1,6 +1,6 @@
 """ET slate window -> UTC ISO bounds for the SGO /events pull.
 
-README §15.9 item 11 Option B. The SGO free tier meters ENTITIES (2,500/month,
+docs/FINDINGS.md finding 3 Option B. The SGO free tier meters ENTITIES (2,500/month,
 1 returned event = 1 entity), and an unfiltered MLB pull returns ~51 events —
 ~3-4 days of schedule — of which the builder uses only today's slate
 (load_player_legs filters `g.date` to the slate). Narrowing the pull to the

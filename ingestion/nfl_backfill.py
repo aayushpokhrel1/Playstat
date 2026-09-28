@@ -223,7 +223,7 @@ def backfill_teams(schedule_rows, engine, seasons):
 
 def team_points_rows(row, game_id, home_team_id, away_team_id):
     """Pure: final-score rows for team_game_stats. Empty for an unplayed game.
-    NFL final scores are otherwise discarded at ingest (see README §16 / #3);
+    NFL final scores are otherwise discarded at ingest (see PRODUCT.md / #3);
     stored as a 'points' actual so settlement reads them like MLB runs_inning_1."""
     home, away = row.get("home_score"), row.get("away_score")
     if home in (None, "") or away in (None, ""):

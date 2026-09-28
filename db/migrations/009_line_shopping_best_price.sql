@@ -1,4 +1,4 @@
--- Line shopping (README §15.9 item 3): best single-book price + book per leg
+-- Line shopping (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md): best single-book price + book per leg
 -- side, kept ALONGSIDE the existing consensus over/under/home/away columns.
 -- Additive + nullable: old rows and any line with no eligible book stay NULL,
 -- and the builder falls back to the consensus price (like model_prob=None).

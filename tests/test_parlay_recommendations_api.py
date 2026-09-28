@@ -1,7 +1,7 @@
 """Tests for the shared api.main._as_legs_list JSONB unwrap helper.
 
-Historically this file also covered GET /parlay-recommendations (README §15.10
-bug #5). That endpoint was DEPRECATED then removed 2026-08-06 (README §16 —
+Historically this file also covered GET /parlay-recommendations (docs/ARCHITECTURE.md
+bug #5). That endpoint was DEPRECATED then removed 2026-08-06 (PRODUCT.md —
 the model is shelved; Budgerr migrated onto /parlay-builder/saved), so its
 DB-query / kind-filter tests are gone. `_as_legs_list` itself survives: it is
 still used by GET /parlay-builder/saved to unwrap the {"class", "legs": [...]}
@@ -15,7 +15,7 @@ DB-free by design, matching tests/test_settle.py's conventions.
 import api.main as api_main
 
 
-# --- _as_legs_list: the unwrap fix (README §15.10 bug #5) --------------------
+# --- _as_legs_list: the unwrap fix (docs/ARCHITECTURE.md bug #5) --------------------
 
 def test_as_legs_list_passes_through_bare_list():
     # The legacy kind='player' shape: legs is already a bare list.

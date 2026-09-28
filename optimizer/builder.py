@@ -1,4 +1,4 @@
-"""Low-risk parlay builder (README §15).
+"""Low-risk parlay builder (PRODUCT.md).
 
 Constructs across-game parlays from MLB player props + team markets, ranked by
 DE-VIGGED MARKET probability. This is an honest constructor and paper-trading
@@ -6,8 +6,8 @@ sandbox: it makes no claim of edge or positive expected value.
 
 Market-centric on purpose: it de-vigs the raw two-sided odds itself and takes
 the FAVORITE side. It never depended on the model's own preferred side
-(`edges.side`/`edges.implied_prob`, possibly an underdog — README §15.4); the
-`edges`/`game_edges` tables are gone entirely now (model teardown, §16/#3B),
+(`edges.side`/`edges.implied_prob`, possibly an underdog — docs/ARCHITECTURE.md); the
+`edges`/`game_edges` tables are gone entirely now (model teardown, PRODUCT.md/#3B),
 so `model_prob` is always None.
 """
 
@@ -24,6 +24,12 @@ from optimizer.builder_core import (
 )
 from modeling.correlation import nrfi_f5_lift
 
+# These strings are a LIVE CONSUMER CONTRACT, not an internal label: they land in
+# the saved legs JSONB that Budgerr reads, and Budgerr's own market enum is
+# {first_inning_runs, f5_runs}, i.e. MLB-ONLY. Every other sport here uses
+# full_game_* instead, so pointing a consumer at a non-MLB builder breaks it
+# silently until that enum is extended. Renaming a value is a breaking change;
+# adding a sport means telling the consumer first (docs/OPERATIONS.md).
 TEAM_MARKETS = {
     "mlb": ("first_inning_runs", "f5_runs"),
     "nfl": ("full_game_total", "full_game_spread", "full_game_moneyline"),
@@ -44,7 +50,7 @@ def _team_class(sport):
     return "game_tier" if sport in ("nfl", "nba", "mls", "ucl", "nhl") else "team_tier"
 
 
-# Lookback for the start-probability filter (README §15.9 item 11 / item 9d).
+# Lookback for the start-probability filter (docs/FINDINGS.md finding 3 / item 9d).
 # 21 days ≈ 18 team games — long enough to separate an everyday starter from a
 # bench/platoon bat, short enough to track a recent role change.
 START_RATE_WINDOW_DAYS = 21
@@ -105,7 +111,7 @@ def load_start_rates(engine, slate_date=None, sport="mlb", window_days=START_RAT
 
 
 def filter_by_start_rate(legs, start_rates, min_start_rate):
-    """Drop player legs whose player rarely appears (README §15.9 item 11).
+    """Drop player legs whose player rarely appears (docs/FINDINGS.md finding 3).
 
     Pure. Team legs are never filtered (a game always happens). A player MISSING
     from start_rates is kept — an absent rate means "can't judge" (their team had
@@ -114,7 +120,7 @@ def filter_by_start_rate(legs, start_rates, min_start_rate):
 
     Why this exists: the chain builds ~08:39 ET, hours before MLB lineups post,
     so 18.3% of legs voided on players who were then rested/scratched — 34.9% of
-    cards lost a leg and 22.9% degraded to <=1 graded leg (README §15.9 item 9d).
+    cards lost a leg and 22.9% degraded to <=1 graded leg (docs/FINDINGS.md finding 3).
     """
     if not min_start_rate:
         return legs
@@ -129,7 +135,7 @@ def filter_by_start_rate(legs, start_rates, min_start_rate):
 def filter_by_confirmed_lineup(legs, confirmed_ids, started_game_ids):
     """Restrict legs to CONFIRMED starters in games that have not started.
 
-    README §15.9 item 11 Option B. Pure — the caller fetches the lineup.
+    docs/FINDINGS.md finding 3 Option B. Pure — the caller fetches the lineup.
 
     confirmed_ids=None is OFF and returns `legs` unchanged (byte-identical
     default). An EMPTY set is meaningfully different: it means no lineup has
@@ -152,10 +158,10 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
     """Latest two-sided player prop lines on TODAY'S slate (unfinished games).
 
     model_prob is now ALWAYS None: the `edges` table it came from was dropped
-    with the model teardown (README §16 / #3B, 2026-08-06), so the old
+    with the model teardown (PRODUCT.md / #3B, 2026-08-06), so the old
     `LEFT JOIN edges` was removed. normalize_player_leg tolerates its absence
     (row.get("model_prob") -> None), and model_prob was never used for ranking —
-    the builder ranks purely on de-vigged market probability (§15.4/§15.8).
+    the builder ranks purely on de-vigged market probability (docs/ARCHITECTURE.md/PRODUCT.md guardrails).
 
     slate_date restricts candidate games to a `g.date` range starting at
     slate_date (default: CURRENT_DATE, evaluated server-side so it tracks the
@@ -163,7 +169,7 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
     (MLB's default) collapses the range to a single day, identical to the old
     `g.date = slate_date` behavior. Without this, futures prop lines can leak
     games weeks/months out and mix a tonight leg with a September leg in the
-    same parlay (README §15.10 KNOWN ISSUE / §15.9 item 6).
+    same parlay (docs/ARCHITECTURE.md KNOWN ISSUE / docs/ARCHITECTURE.md).
 
     sport restricts candidate games to `g.sport = sport` (default: "mlb"),
     so an NFL builder run never pools MLB legs into the same parlay
@@ -195,7 +201,7 @@ def load_player_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", 
             conn, params={"slate_date": slate_date, "sport": sport, "window_days": window_days},
         )
     legs = _normalize(df, normalize_player_leg, floor)
-    # Start-probability filter (README §15.9 item 11 Option A). Default 0.0 = OFF,
+    # Start-probability filter (docs/FINDINGS.md finding 3 Option A). Default 0.0 = OFF,
     # so the library default stays byte-identical; the chain/CLI opt in explicitly.
     if min_start_rate:
         legs = filter_by_start_rate(legs, load_start_rates(engine, slate_date, sport), min_start_rate)
@@ -212,7 +218,7 @@ def load_team_legs(engine, floor=DEFAULT_FLOOR, slate_date=None, sport="mlb", wi
     """Latest two-sided team-market lines on TODAY'S slate (unfinished games).
     See load_player_legs for the slate_date/sport/window_days rationale and for
     why model_prob is now always None (the `game_edges` table was dropped with
-    the model teardown, §16/#3B, so its `LEFT JOIN` was removed). markets are
+    the model teardown, PRODUCT.md/#3B, so its `LEFT JOIN` was removed). markets are
     per-sport (TEAM_MARKETS[sport]); a sport with no game markets configured
     (unknown sport) short-circuits to no legs.
     """
@@ -318,7 +324,7 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
     The default "across_game" is the existing player-tier mixed build; a
     dedicated team-only build (--team-only) passes "team_tier" so the saved
     endpoint (api/main.py GET /parlay-builder/saved) can tell the two apart
-    (README §15.9 item 5 / §15.10 team-legs note).
+    (PRODUCT.md / docs/ARCHITECTURE.md team-legs note).
 
     sport is written into the same wrapper as {"sport": ...} (default "mlb").
     Existing MLB rows predate this field and have no "sport" key; readers
@@ -353,7 +359,7 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
                     "odds": leg["american_odds"], "line": leg["line_value"],
                     "label": leg["label"], "market_prob": leg["market_prob"],
                     "model_prob": leg["model_prob"],
-                    # Best-price book for the shopped odds (§15.9 item 3). .get:
+                    # Best-price book for the shopped odds (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md). .get:
                     # legacy/hand-built legs without the key store book=None.
                     "book": leg.get("book"),
                 }
@@ -364,7 +370,7 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
                 continue
             seen.add(sig)
             wrapper = {"class": parlay_class, "sport": sport}
-            # Same-game cards (README §15.9 item 1) carry correlation metadata at
+            # Same-game cards (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) carry correlation metadata at
             # the wrapper level — it's a property of the pair, not a leg. Absent on
             # every other class, so their persisted shape is byte-unchanged.
             for k in ("lift", "lift_n", "both_n", "small_sample"):
@@ -393,7 +399,7 @@ def save_builds(engine, target_payout, results, parlay_class="across_game", spor
 
 
 def build_same_game(team_legs, lift_fn, top_n=10):
-    """Same-game NRFI+F5 cards from floor-passing team legs (README §15.9 item 1).
+    """Same-game NRFI+F5 cards from floor-passing team legs (docs/superpowers/specs/2026-08-07-same-game-combos-design.md).
 
     Thin wrapper over builder_core.same_game_pairs with the default sample gate,
     kept so main() stays thin and this wiring is unit-testable without a DB.
@@ -418,7 +424,7 @@ def _same_game_lift_fn(engine):
 def _run_same_game(engine, args, window_days):
     """The --same-game build: one lift-adjusted NRFI+F5 card per eligible game.
 
-    Deliberately labelled EXCEPTION to the across-game-only guardrail (§15.8 #5).
+    Deliberately labelled EXCEPTION to the across-game-only guardrail (PRODUCT.md guardrails #5).
     The printed payout is a NON-PLACEABLE reference — a book reprices or restricts
     correlated same-game legs — so the honest quantity is the lift-adjusted joint.
     """
@@ -472,22 +478,22 @@ def main():
                              "weekly card). Override to force a specific span.")
     parser.add_argument("--team-only", action="store_true",
                         help="build from team-market (NRFI/F5) legs only — a dedicated, "
-                             "higher-variance team tier (README §15.9 item 5). --save "
+                             "higher-variance team tier (PRODUCT.md). --save "
                              "writes class=\"team_tier\" instead of \"across_game\".")
     parser.add_argument("--min-start-rate", type=float, default=0.0,
                         help="drop player legs whose player appeared in fewer than "
                              "this fraction of their team's games over the last 21 days "
-                             "(README §15.9 item 11). The chain builds hours before "
+                             "(docs/FINDINGS.md finding 3). The chain builds hours before "
                              "lineups post, so rarely-used players void ~1 leg in 5. "
                              "0.0 = off (default); the daily chain passes 0.65. Team "
                              "legs and players with no measurable history are kept.")
     parser.add_argument("--require-confirmed-lineup", action="store_true",
                         help="MLB only: restrict player legs to players in a POSTED "
                              "lineup and to games not yet started; saves class "
-                             "'confirmed_lineup' (README §15.9 item 11 Option B)")
+                             "'confirmed_lineup' (docs/FINDINGS.md finding 3 Option B)")
     parser.add_argument("--same-game", action="store_true",
                         help="build the same-game NRFI+F5 combos class (README "
-                             "§15.9 item 1): one lift-adjusted card per game that "
+                             "docs/superpowers/specs/2026-08-07-same-game-combos-design.md): one lift-adjusted card per game that "
                              "has both markets clearing the floor. Pins no payout "
                              "axis (--target-payout/--min-prob are ignored). --save "
                              "writes class=\"same_game_pair\".")

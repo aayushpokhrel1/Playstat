@@ -25,7 +25,7 @@ function GameMatchup({ leg }: { leg: BuilderLeg }) {
 }
 
 /**
- * Same-game combos (README §15.9 item 1) -- the deliberate, labelled exception
+ * Same-game combos (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) -- the deliberate, labelled exception
  * to the across-game-only rule.
  *
  * Two honesty rules drive this layout:

@@ -87,7 +87,7 @@ def test_saved_builder_reads_only_builder_rows_and_unwraps_dict(monkeypatch):
 
 
 def test_saved_builder_leg_exposes_book(monkeypatch):
-    """Line shopping (§15.9 item 3): a leg's shopped `book` round-trips; a
+    """Line shopping (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md): a leg's shopped `book` round-trips; a
     legacy leg without the key defaults to None."""
     builder_row = (
         91, "2026-08-06 12:00:00-04", 1.4, 0.66, 1.67,
@@ -115,7 +115,7 @@ def test_saved_builder_leg_exposes_book(monkeypatch):
     assert legacy.book is None           # absent key -> None, no crash
 
 
-# --- GET /parlay-builder/saved?tier= (README §15 Change 3) ------------------
+# --- GET /parlay-builder/saved?tier= (PRODUCT.md Change 3) ------------------
 # tier selects the legs->>'class' filter added to the WHERE clause. Additive:
 # no `tier` (or `tier=player`) must reproduce today's exact query — filtering
 # on class='across_game', the shape every existing saved row has. There is no
@@ -328,7 +328,7 @@ def test_saved_builder_query_filters_by_sport_with_mlb_default_coalesce():
     assert '"sport": sport' in source
 
 
-# --- same-game combos tier (README §15.9 item 1) ------------------------------
+# --- same-game combos tier (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) ------------------------------
 
 def test_saved_tier_same_game_filters_to_same_game_pair_class(monkeypatch):
     engine = _CapturingEngine()

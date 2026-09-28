@@ -1,6 +1,6 @@
--- Migration 008: drop the shelved model + F5 tables (README §16 / roadmap #3B).
+-- Migration 008: drop the shelved model + F5 tables (PRODUCT.md / roadmap #3B).
 -- The MLB player prediction model and the dormant F5 team-market model were
--- shelved 2026-07-29 (§16) and DELETED 2026-08-06 (#3B, user-approved): their
+-- shelved 2026-07-29 (PRODUCT.md) and DELETED 2026-08-06 (#3B, user-approved): their
 -- code, the serving endpoints (/edges, /game-predictions, /parlay-recommendations
 -- removed in #3A; /edge-distributions, /model-performance, /players/{id}/
 -- predictions, /backtest-history, /clv-summary removed in #3B Phase 1), and now

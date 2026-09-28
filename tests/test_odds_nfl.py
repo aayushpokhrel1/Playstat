@@ -67,7 +67,7 @@ def _prop_odd(stat_id, entity, side, line, price):
 
 
 def test_nfl_stat_map_covers_sgo_confirmed_settleable_markets():
-    # SGO's live-confirmed NFL prop markets (README §14.3), mapped to our
+    # SGO's live-confirmed NFL prop markets (PRODUCT.md), mapped to our
     # settleable player_game_stats stat_types. NOT the full 12 -- SGO's
     # free-tier NFL coverage doesn't include targets/completions/carries/
     # pass_attempts, and offers anytime `touchdowns` (no settleable single
@@ -93,7 +93,7 @@ def test_collect_prop_rows_maps_an_nfl_passing_yards_market():
     assert rows == [{
         "player_name": "Patrick Mahomes", "stat_type": "passing_yards",
         "line_value": 274.5, "over_odds": -110, "under_odds": -105,
-        # Line-shopping best-price columns (§15.9 item 3): None here — this
+        # Line-shopping best-price columns (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md): None here — this
         # fixture's odds carry no byBookmaker, so best_price falls back.
         "best_over_odds": None, "best_over_book": None,
         "best_under_odds": None, "best_under_book": None,
@@ -113,7 +113,7 @@ def test_collect_game_rows_maps_the_nfl_full_game_total():
     assert rows == [{
         "market": "full_game_total", "line_value": 47.5,
         "over_odds": -110, "under_odds": -108,
-        # Line-shopping best-price columns (§15.9 item 3): None — no byBookmaker.
+        # Line-shopping best-price columns (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md): None — no byBookmaker.
         "best_over_odds": None, "best_over_book": None,
         "best_under_odds": None, "best_under_book": None,
     }]

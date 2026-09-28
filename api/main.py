@@ -202,7 +202,7 @@ def box_scores(date: date_type, sport: str | None = None):
 def _as_legs_list(raw):
     """Unwrap a parlay_recommendations.legs JSONB value into a plain list of
     leg dicts. Used by /parlay-builder/saved. Same defensive shape as
-    modeling.settle._as_legs_list (README §15.10 bug #4): psycopg2 hands JSONB
+    modeling.settle._as_legs_list (docs/ARCHITECTURE.md bug #4): psycopg2 hands JSONB
     back already parsed, so the builder {"class", "legs": [...]} wrapper
     arrives as a dict, and json.loads(dict) raises TypeError, not a parse
     error — handle both the bare-list and dict-wrapper shapes.
@@ -215,7 +215,7 @@ def _as_legs_list(raw):
 
 
 def _wrapper_meta(raw):
-    """Wrapper-level same-game correlation metadata (README §15.9 item 1).
+    """Wrapper-level same-game correlation metadata (docs/superpowers/specs/2026-08-07-same-game-combos-design.md).
 
     Only same_game_pair rows carry these keys; every other class (and any bare-list
     legacy row) yields None/False, so the response shape is additive everywhere.
@@ -236,7 +236,7 @@ def _wrapper_meta(raw):
 def player_side(player_team_id, home_id, away_id):
     """Pure: which side of a game a player's (latest-pull) team_id matches.
 
-    `players.team_id` is a "latest pull" (README §15.10 NBA note): a traded
+    `players.team_id` is a "latest pull" (a traded-player caveat, first hit on NBA): a traded
     player's stored team can differ from the team they played for in THIS
     game. A stored team_id matching NEITHER side (traded mid-season, stale
     row, etc.) returns None so callers fall back to an un-emphasized
@@ -407,7 +407,7 @@ def parlay_builder(
 # tier -> the legs blob's {"class": ...} value written by optimizer/builder.py
 # save_builds(). "player" is today's only production shape (the mixed
 # player+team across-game build) and stays the default so a caller passing no
-# `tier` gets exactly today's behaviour, unchanged (README §15.9 item 3 /
+# `tier` gets exactly today's behaviour, unchanged (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md /
 # Budgerr contract — additive-only). "team" is the new dedicated team-only
 # tier (--team-only). "all" skips the class filter entirely.
 TIER_TO_CLASS = {"player": "across_game", "team": "team_tier", "game": "game_tier",
@@ -427,7 +427,7 @@ def saved_builder_parlays(limit: int = 10, tier: str = "player", sport: str = "m
     behaviour — the mixed player+team across-game tier), "team" (the
     dedicated team-only tier, higher-variance NRFI/F5-only constructions,
     may be empty on any given slate), "same_game" (the labelled same-game
-    NRFI+F5 combos class, README §15.9 item 1 — carries lift/lift_n/both_n/
+    NRFI+F5 combos class, docs/superpowers/specs/2026-08-07-same-game-combos-design.md — carries lift/lift_n/both_n/
     small_sample, and its combined_odds is a NON-PLACEABLE reference price:
     a book reprices or restricts correlated same-game legs), or "all" (no
     class filter).
@@ -514,7 +514,7 @@ def _shape_builder_record(rows):
     """Pure: rows are (cls, target_payout, n, wins, losses, pushes, staked, pnl)
     as produced by the GROUP BY in builder_record() below. Maps cls->tier via
     _CLASS_TO_TIER, computes roi=pnl/staked (0.0 when staked==0) so variable
-    Kelly stakes (README §15.9 item 4) aggregate correctly, casts Decimals to
+    Kelly stakes (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md) aggregate correctly, casts Decimals to
     float, and orders player-before-team then ascending target_payout. DB-free
     and unit-testable without a database.
     """
@@ -537,7 +537,7 @@ def _shape_builder_record(rows):
 
 @app.get("/parlay-builder/record", response_model=list[BuilderRecordOut])
 def builder_record(sport: str = "mlb"):
-    """Paper-trading builder record split by tier + target payout (README §15).
+    """Paper-trading builder record split by tier + target payout (PRODUCT.md).
     Dashboard-only; /bet-performance is unchanged and still feeds web/app/clv.
     sport is additive (default "mlb", mirrors /parlay-builder/saved's COALESCE
     default) so NFL and MLB records don't pool (NFL builder chain #4a)."""
@@ -582,7 +582,7 @@ def _shape_line_movement(saved_rows, close_rows):
             # reports movement 0.0 at "100% coverage" — falsely implying we had
             # measured something. Verified 2026-08-08: one pull/day, so 412 of
             # 454 legs were self-comparisons. Coverage must reflect what was
-            # actually measured, so a same-pull row is dropped (README §15.8 #2).
+            # actually measured, so a same-pull row is dropped (PRODUCT.md guardrails #2).
             if close is not None and built_at is not None:
                 pulled_at = close.get("pulled_at")
                 if pulled_at is None or pulled_at <= built_at:
@@ -603,10 +603,10 @@ def _shape_line_movement(saved_rows, close_rows):
 
 @app.get("/parlay-builder/line-movement", response_model=LineMovementOut)
 def builder_line_movement(sport: str = "mlb", days: int = 14):
-    """Line movement from build price to last pre-start price (README §15.9 item 12).
+    """Line movement from build price to last pre-start price (docs/FINDINGS.md finding 6).
 
     Dashboard-only and ADDITIVE — /parlay-builder/saved, /box-scores and /games
-    are untouched (Budgerr contract, §7.1). NOT a closing line and NOT an edge
+    are untouched (Budgerr contract, docs/OPERATIONS.md). NOT a closing line and NOT an edge
     claim: see LineMovementOut's docstring.
     """
     with engine.begin() as conn:
@@ -741,7 +741,7 @@ def _shape_daily_parlays(rows):
 
 @app.get("/parlay-builder/record/daily", response_model=list[BuilderRecordDailyOut])
 def builder_record_daily(sport: str = "mlb"):
-    """Per-day drill-down of the builder record (README §15 follow-on):
+    """Per-day drill-down of the builder record (PRODUCT.md follow-on):
     same settled-builder data as /parlay-builder/record, grouped by slate
     date instead of tier/target_payout. Newest date first. Dashboard-only;
     /bet-performance is unchanged and still feeds web/app/clv. sport is
@@ -787,11 +787,11 @@ def builder_record_daily_parlays(date: str, sport: str = "mlb"):
 
 @app.get("/bet-performance", response_model=list[BetPerformanceOut])
 def bet_performance():
-    """Paper-trading ledger aggregate (README §14.1, modeling/settle.py) — the
+    """Paper-trading ledger aggregate (docs/ARCHITECTURE.md, modeling/settle.py) — the
     honest record of whether recommended parlays/edges would have won.
 
     Parlay rows are broken out by their source parlay_recommendations.kind so
-    the builder's paper record (README §15) doesn't pool with the legacy
+    the builder's paper record (PRODUCT.md) doesn't pool with the legacy
     model-ranked parlays: 'parlay_model' (kind='player'), 'parlay_team'
     (kind='team'), 'parlay_builder' (kind='builder'), plus 'edge' and a
     combined 'all' row. The recommendation_outcomes.bet_type column itself

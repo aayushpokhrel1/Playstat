@@ -10,7 +10,7 @@
 #
 # Observed 2026-08-11..13: the Mac was away from ~12:00 on 08-11 until ~11:53 on
 # 08-13. In that time the designed 17:30/19:45 pulls produced ZERO runs — no
-# confirmed-lineup card, no closing snapshot — stalling the §15.9 item 12 CLV
+# confirmed-lineup card, no closing snapshot — stalling the docs/FINDINGS.md finding 6 CLV
 # gate that the entire late-afternoon job exists to feed. Across the whole life
 # of the job, `confirmed_lineup` cards exist for exactly ONE day (08-10) and a
 # genuine 19:45 close snapshot for exactly ONE day (08-09, the dead Sunday).

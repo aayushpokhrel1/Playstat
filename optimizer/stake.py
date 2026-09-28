@@ -1,4 +1,4 @@
-"""Kelly stake sizing for builder parlays (README §15.9 item 4).
+"""Kelly stake sizing for builder parlays (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md).
 
 PURE math + a slate-sizing pass. The edge sized on is the line-shopping edge:
 p = consensus devig joint_prob, d = shopped combined_odds. There is NO +EV/edge
@@ -60,7 +60,7 @@ def size_slate(rows, *, exposure_cap=5.0, cap_scope="global", fraction=0.25, ban
     return out
 
 
-# Group the slate by ET-local calendar date, matching README §15.10's slate
+# Group the slate by ET-local calendar date, matching docs/ARCHITECTURE.md's slate
 # reasoning (created_at is an ET timestamptz; a plain ::date in a UTC session
 # would split a night). NULL sport (legacy rows) defaults to 'mlb'.
 _SELECT = text(

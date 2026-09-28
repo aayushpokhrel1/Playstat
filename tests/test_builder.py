@@ -1,4 +1,4 @@
-"""Tests for optimizer/builder.py's DB-facing layer (README §15 Stage 3).
+"""Tests for optimizer/builder.py's DB-facing layer (PRODUCT.md Stage 3).
 
 CRITICAL SAFETY: ingestion.db.get_engine() points at the LIVE production
 database (from .env). None of these tests call it, and none call save_builds
@@ -17,7 +17,7 @@ from optimizer import builder
 from optimizer.builder_core import build, normalize_team_leg
 
 
-# --- slate window (README §15 Change 1) --------------------------------------
+# --- slate window (PRODUCT.md Change 1) --------------------------------------
 # No DB harness exists, so the date predicate and its default are checked
 # purely: the SQL text and the slate_date=None default. The real-data
 # exclusion of future games is verified separately, read-only, against the
@@ -45,7 +45,7 @@ def test_load_legs_threads_slate_date_through_to_both_loaders():
     source = inspect.getsource(builder.load_legs)
     # NFL tier #2 threads a trailing `sport` param alongside slate_date (see
     # test_load_legs_threads_sport_to_both_loaders below); NFL chain #4a adds a
-    # further trailing `window_days` param; §15.9 item 11 Option B adds trailing
+    # further trailing `window_days` param; docs/FINDINGS.md finding 3 Option B adds trailing
     # confirmed_ids/started_game_ids — updated here to match, same intent:
     # slate_date is still passed positionally to both.
     assert "load_player_legs(engine, floor, slate_date, sport, window_days, min_start_rate," in source
@@ -58,7 +58,7 @@ def test_main_has_slate_date_and_team_only_cli_flags():
     assert "--team-only" in source
 
 
-# --- dedicated team tier (README §15 Change 3) -------------------------------
+# --- dedicated team tier (PRODUCT.md Change 3) -------------------------------
 
 def _team_leg(game_id, market, over_odds, under_odds, line_value=0.5):
     return normalize_team_leg({
@@ -68,7 +68,7 @@ def _team_leg(game_id, market, over_odds, under_odds, line_value=0.5):
 
 
 def test_build_on_team_only_legs_returns_team_only_parlays():
-    """build() itself needs no team-tier-specific code (README §15 Change 3
+    """build() itself needs no team-tier-specific code (PRODUCT.md Change 3
     reuses it unmodified) — a team-only leg pool just yields team-only results."""
     legs = [
         _team_leg(1, "first_inning_runs", -150, 130),
@@ -86,7 +86,7 @@ def test_build_on_team_only_legs_returns_team_only_parlays():
 
 
 def test_build_on_team_only_legs_can_legitimately_return_nothing():
-    """Team markets price near coin-flip (README §15.10 team-legs note) so a
+    """Team markets price near coin-flip (docs/ARCHITECTURE.md team-legs note) so a
     too-thin team pool should return [] cleanly, not raise."""
     legs = [_team_leg(1, "first_inning_runs", -150, 130)]  # only one game
     results = build(legs, target_payout=1.0, min_legs=2, max_legs=4, top_n=5)
@@ -168,7 +168,7 @@ def test_save_builds_defaults_to_across_game_class_unchanged():
 
 
 def test_save_builds_writes_book_into_legs_json():
-    """Line shopping (§15.9 item 3): a leg's shopped `book` round-trips into the
+    """Line shopping (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md): a leg's shopped `book` round-trips into the
     stored legs JSONB."""
     engine = _CapturingEngine()
     builder.save_builds(engine, 1.4, _one_result("player", book="fanduel"))
@@ -503,7 +503,7 @@ def test_save_builds_omits_lift_keys_for_normal_classes():
 
 
 def test_build_same_game_helper_wires_pairs():
-    """--same-game (§15.9 item 1) threads floor-passing team legs through the pure
+    """--same-game (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) threads floor-passing team legs through the pure
     pairing fn with an injected lift — no DB."""
     legs = [
         {"game_id": 1, "market": "first_inning_runs", "side": "under",
@@ -539,7 +539,7 @@ def test_same_game_lift_fn_caches_per_side_line_combo():
     assert len(calls) == 2
 
 
-# --- start-probability filter (README §15.9 item 11) --------------------------
+# --- start-probability filter (docs/FINDINGS.md finding 3) --------------------------
 # The chain builds ~08:39 ET, before MLB lineups post, so 18.3% of legs voided on
 # players who were rested/scratched. These lock the pure filter's contract.
 

@@ -10,7 +10,7 @@ from ingestion.nhl_backfill import (
 
 
 def test_nhl_ids_clear_all_bands_and_fit_int4():
-    """Guard test for the +1B id scheme (README §11 / §16.4). NHL native game
+    """Guard test for the +1B id scheme (docs/ARCHITECTURE.md). NHL native game
     ids are ~2.03e9 and sit above every existing band, so they're stored as
     `1e9 + (raw - 2e9)`. That must land clear of NFL's real ~410M ceiling and
     UCL's 500M while fitting INT4 (2,147,483,647).
