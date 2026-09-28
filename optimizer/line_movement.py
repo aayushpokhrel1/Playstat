@@ -1,16 +1,16 @@
 """Line movement between a card's build price and its last pre-start price.
 
-README §15.9 item 12's MANDATORY validation gate. The builder's apparent "+EV"
+docs/FINDINGS.md finding 6's MANDATORY validation gate. The builder's apparent "+EV"
 is measured against a consensus of six SOFT books with no sharp reference, so
 best-of-six beating consensus-of-six may be a genuine stale line OR an artifact
 of one outlier dragging the average. The industry-standard discriminator is
 closing-line value.
 
-This is a MEASUREMENT-ONLY module. `modeling/clv.py` was DELETED in §16 #3B and
+This is a MEASUREMENT-ONLY module. `modeling/clv.py` was DELETED in PRODUCT.md #3B and
 this is deliberately NOT a revival of it: it lives beside optimizer/devig.py and
 optimizer/stake.py because it measures the builder, not a model.
 
-HONESTY (§15.8 #2). This is NOT the true closing line — the last snapshot lands
+HONESTY (PRODUCT.md guardrails #2). This is NOT the true closing line — the last snapshot lands
 a median ~100 minutes (worst case ~150) before first pitch. It must be presented
 as "line movement, build -> last pre-start snapshot" with the lead time stated,
 and never as edge/value/+EV.

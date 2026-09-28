@@ -161,7 +161,7 @@ CREATE TABLE parlay_recommendations (
     combined_odds   NUMERIC
 );
 
--- Paper-trading ledger (migration 004, modeling/settle.py, README §14.1):
+-- Paper-trading ledger (migration 004, modeling/settle.py, docs/ARCHITECTURE.md):
 -- one row per recommended parlay and per flagged edge, written once when its
 -- game(s) finish and the actual stat lands. pnl is 1-unit paper P&L at the
 -- odds frozen when the bet was recommended (not the closing line).

@@ -1,6 +1,6 @@
 """Sharp-reference (Pinnacle) close snapshots via The Odds API.
 
-README §15.9 item 14e / spec 2026-08-11-sharp-reference-snapshot-design.md.
+docs/FINDINGS.md finding 6 / spec 2026-08-11-sharp-reference-snapshot-design.md.
 
 BUDGET IS THE DESIGN CONSTRAINT: the free tier meters 500 credits/month.
 The /events list is free; a slate-wide h2h+totals pull costs 2 credits; each
@@ -15,7 +15,7 @@ normalized team names + ET date; prop outcomes map to players by normalized
 name. Unmatched anything is logged and counted, and the row is dropped.
 
 Feeds ONLY optimizer/sharp_compare.py (a CLI report). No API, no dashboard,
-no builder input — §15.8 #2 by construction.
+no builder input — PRODUCT.md guardrails #2 by construction.
 """
 
 import argparse

@@ -1,4 +1,4 @@
--- Migration 002: team/game-level stats and markets (README §13.3).
+-- Migration 002: team/game-level stats and markets (docs/ARCHITECTURE.md).
 --
 -- prop_lines/model_predictions are player-keyed, but markets like
 -- "first inning total runs under 1.5" belong to a game, not a player.

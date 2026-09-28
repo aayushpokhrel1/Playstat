@@ -53,7 +53,7 @@ def test_as_legs_list_passes_through_parsed_jsonb():
     assert _as_legs_list('[{"kind": "player"}]') == [{"kind": "player"}]
 
 
-# --- DNP void handling (README §15.10 KNOWN ISSUE / §15.9 item 6) -----------
+# --- DNP void handling (docs/ARCHITECTURE.md KNOWN ISSUE / docs/ARCHITECTURE.md) -----------
 # A scratched/DNP player (or a team-market game with no team_game_stats
 # aggregate) leaves a game FT with no stat row. Standard book rule: void the
 # leg like a push instead of stranding the whole parlay "not ready" forever.
@@ -96,10 +96,10 @@ def test_parlay_result_miss_plus_void_is_a_loss():
 
 
 # --- regression guard: the builder settle path wires in the DNP void rule ----
-# (README §15.10 void rule.) No live DB is available to exercise this end to end
+# (docs/ARCHITECTURE.md void rule.) No live DB is available to exercise this end to end
 # (ingestion.db.get_engine() points at production), so this asserts the void
 # branch is wired into the function's source rather than running it. The legacy
-# settle_parlays/settle_team_parlays paths were deleted with the model (§16 #3B).
+# settle_parlays/settle_team_parlays paths were deleted with the model (PRODUCT.md #3B).
 
 @pytest.mark.parametrize("fn", [settle_builder_parlays])
 def test_settle_function_voids_dnp_legs_via_leg_status(fn):
@@ -109,7 +109,7 @@ def test_settle_function_voids_dnp_legs_via_leg_status(fn):
     assert '"dnp": True' in source
 
 
-# --- Kelly stake sizing (README §15.9 item 4) -------------------------------
+# --- Kelly stake sizing (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md) -------------------------------
 # The paper stake is no longer a flat 1u: optimizer/stake.py writes a Kelly
 # stake onto parlay_recommendations.stake and settle books pnl at that stake.
 # parlay_result already takes stake=; these pin the scaling + the wiring.
@@ -258,7 +258,7 @@ def test_nfl_game_market_parlay_settles(monkeypatch):
     # game 333: home 27 away 17, home line -3.5 -> margin 10 covers -> home wins.
     blob = {"class": "game_tier", "sport": "nfl", "legs": legs}
     # 4-tuple now: (parlay_id, created_at, stake, legs). stake=0.7 exercises the
-    # Kelly stake threading (README §15.9 item 4).
+    # Kelly stake threading (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md).
     candidate_rows = [(1, created_at, 0.7, blob)]
 
     games_df = pd.DataFrame([
@@ -324,7 +324,7 @@ def test_nfl_game_market_parlay_settles(monkeypatch):
     assert by_market["full_game_total"]["result"] == "hit"  # existing settle_leg vocabulary
 
 
-# --- same-game combos settle through the shared path (README §15.9 item 1) ---
+# --- same-game combos settle through the shared path (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) ---
 # A same-game card is TWO team legs on ONE game_id. Settlement's team lookups are
 # keyed by (game_id, market), so the two legs resolve independently — there is no
 # distinct-game assumption anywhere in the leg loop. These lock that in.

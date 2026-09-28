@@ -17,21 +17,30 @@ This project has [PRODUCT.md](PRODUCT.md) (register: product, platform: web — 
 | File | What it holds |
 | --- | --- |
 | `README.md` | What it is, the stack, how to run it |
-| `PRODUCT.md` | Product truth: who it is for, decisions, roadmap, what is deferred and why |
+| `PRODUCT.md` | Product truth: who it is for, guardrails, decisions, roadmap, what is deferred and why |
 | `DESIGN.md` | The visual system: tokens, type, colour, component patterns |
+| `docs/ARCHITECTURE.md` | How the system is put together, and the data model |
+| `docs/OPERATIONS.md` | Run, verify, schedule, deploy, secrets, quota, consumer contracts, environment traps |
+| `docs/FINDINGS.md` | What has been measured, and what it rules out |
 | `docs/superpowers/` | Per-feature specs and plans, written before building |
+| `HANDOVER.md` | **Gitignored, current state only** - where things stand, what is half-done, what is next |
 | `CLAUDE.md` | This file |
 
-There is no `HANDOVER.md` here. If one is ever added it holds **current state only** - where
-things stand, what is half-done, what is next. Before adding a line to any such file, ask: will
-this still be true in a month? If yes it belongs in one of the docs above, or in the vault.
+`HANDOVER.md` is gitignored, so **nothing durable may live there** - it cannot survive a fresh
+clone and the next reader may never see it. Before adding a line to it, ask: will this still be
+true in a month? If yes it belongs in one of the docs above, or in the vault. A dated narrative
+of what a session did belongs in `git log`, which already has it in more detail.
+
+**Do not create a `LESSONS.md`.** A lesson has one home, chosen by reach - see "Where knowledge
+goes" below.
 
 ## When Aayush says "update"
 
 "Update the docs", "update everything", or just "update" means **all of it, in this turn**:
 
-1. **The knowledge vault** - `C:\Users\aayus\Documents\Knowledge-Vault\Projects\Playstat\`
-   (the path is per-machine), and **no `Playstat/` folder exists yet** - create `Projects/Playstat/index.md` and link it from the vault's `Projects/index.md`. Add what this session learned that is worth keeping: a
+1. **The knowledge vault** - `C:\Users\aayus\Documents\Knowledge-Vault\Projects\Playstat\index.md`
+   (the path is per-machine; the folder exists and is linked from the vault's
+   `Projects/index.md`). Add what this session learned that is worth keeping: a
    decision and its WHY, a non-obvious gotcha or fix, a research finding, a cross-project
    learning. This is the part that gets forgotten, and it is the part that compounds.
 2. **Every doc in this repo**, not only the one already open.

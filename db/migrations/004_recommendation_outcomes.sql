@@ -1,4 +1,4 @@
--- Migration 004: paper-trading ledger (README §14.1 "Bet-outcome tracking").
+-- Migration 004: paper-trading ledger (docs/ARCHITECTURE.md "Bet-outcome tracking").
 --
 -- The system recommends parlays and flags edges but never records whether
 -- they would have won. recommendation_outcomes is a settlement ledger: one

@@ -197,7 +197,7 @@ export default function RecordPanel({ rows, daily, parlaysByDate }: RecordPanelP
         <div id="builder-record-daily" className={styles.dailyPanel}>
           <p className={styles.dailyCaption}>
             Early slate dates are small samples — a handful of settled parlays can swing
-            W-L-P and ROI a lot day to day (README §15 calibration note). Read these as
+            W-L-P and ROI a lot day to day (PRODUCT.md calibration note). Read these as
             noisy until the sample builds up. Expand a day to see each parlay, and a
             parlay to see which leg landed (✓) or missed (✗).
           </p>

@@ -140,7 +140,7 @@ def test_devig_sums_to_one():
     assert p_over + p_under == pytest.approx(1.0)
 
 
-# --- bet_type_label / aggregate_bet_performance (README §15 Task 2, 2026-07-21) ---
+# --- bet_type_label / aggregate_bet_performance (PRODUCT.md Task 2, 2026-07-21) ---
 # Splits the builder's paper record out of the pooled 'parlay' bucket without
 # touching the bet_type CHECK constraint or writing a migration: the split is
 # derived, in the read path, from parlay_recommendations.kind.
@@ -162,7 +162,7 @@ def test_bet_type_label_unknown_kind_falls_back_to_parlay():
 
 
 def test_aggregate_bet_performance_splits_parlay_by_kind():
-    # Mirrors the live shape reported in README §15 Task 2: all 64 existing
+    # Mirrors the live shape reported in PRODUCT.md Task 2: all 64 existing
     # parlay outcomes are kind='player' legacy rows, so they land under
     # parlay_model, with no parlay_builder row (since no builder rows exist).
     rows = [
@@ -205,7 +205,7 @@ def test_aggregate_bet_performance_empty_is_empty():
     assert aggregate_bet_performance([]) == []
 
 
-# --- dedupe cross-kind safety (README §15 Task 2) ---
+# --- dedupe cross-kind safety (PRODUCT.md Task 2) ---
 # parlay_recommendations.parlay_id is one SERIAL PK shared across
 # kind='player'/'team'/'builder' rows, and each settle_*_parlays() candidate
 # query filters on its own pr.kind — so a given parlay_id can only ever be a

@@ -38,7 +38,7 @@ STAT_MAPS = {
         "pitching_outs": "outs_recorded",
     },
     # NFL player props. statID keys reconciled to the SGO NFL statIDs
-    # LIVE-CONFIRMED 2026-07-15 (README §14.3): SGO's free-tier NFL coverage is
+    # LIVE-CONFIRMED 2026-07-15 (PRODUCT.md): SGO's free-tier NFL coverage is
     # these ~6 markets, NOT the full 12 stat_types we hold actuals for -- it has
     # no targets/completions/carries/pass_attempts markets, and TDs come as an
     # anytime `touchdowns` market (no rush/receive split, and no single settleable
@@ -157,7 +157,7 @@ def parse_american_odds(odds_str):
 
 
 def best_price(by_bookmaker, line_field, consensus_line):
-    """Best single-book price for one side (README §15.9 item 3, line shopping).
+    """Best single-book price for one side (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md, line shopping).
 
     Among `by_bookmaker` entries that are available AND quote the EXACT
     consensus line, return (american_odds, bookmaker_id) with the highest
@@ -398,7 +398,7 @@ if __name__ == "__main__":
                         help="fetch and report statID coverage + match rates without writing")
     parser.add_argument("--starts-after", default=None,
                         help="UTC ISO-8601 lower bound on event start (quota control, "
-                             "README §15.9 item 11); default None = unfiltered")
+                             "docs/FINDINGS.md finding 3); default None = unfiltered")
     parser.add_argument("--starts-before", default=None,
                         help="UTC ISO-8601 upper bound on event start")
     parser.add_argument("--slate-window", action="store_true",

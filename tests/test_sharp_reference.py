@@ -1,4 +1,4 @@
-"""Pure tests for the sharp-reference snapshot pipeline (README §15.9 item 14e).
+"""Pure tests for the sharp-reference snapshot pipeline (docs/FINDINGS.md finding 6).
 
 DB-free and socket-free, following tests/test_parlay.py's conventions:
 ingestion/sharp_ingest.py's matching + parsing and optimizer/sharp_compare.py's

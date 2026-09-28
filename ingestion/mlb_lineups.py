@@ -1,6 +1,6 @@
 """Confirmed MLB lineups + first-pitch times from statsapi (free, no key).
 
-README §15.9 item 11 Option B. The morning chain builds at ~08:39 ET but MLB
+docs/FINDINGS.md finding 3 Option B. The morning chain builds at ~08:39 ET but MLB
 lineups post ~2-3h before first pitch, so ~16.2% of player legs still void even
 after the Option A start-rate filter. This module supplies the posted lineup so a
 17:30 ET pass can build a higher-confidence card.
@@ -19,7 +19,7 @@ import requests
 
 SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
 MLB_ID_OFFSET = 100_000_000
-TIMEOUT = (10, 30)  # (connect, read) — bare timeouts stalled the chain, §15.9 item 8
+TIMEOUT = (10, 30)  # (connect, read) — bare timeouts stalled the chain, docs/OPERATIONS.md
 
 
 def _games(payload):

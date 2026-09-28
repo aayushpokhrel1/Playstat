@@ -4,7 +4,7 @@ The 1st inning is nested inside innings 1-5 and positively correlated, so a
 same-game (NRFI, F5) pair must NOT use naive P_a * P_b. v1 corrects the product
 by a global observed/expected "lift" measured from box-score history — auditable,
 no new modeling family. Known bias: assumes constant dependence and is noisy
-until ~a season of shared history exists (README §14.2 correlation notes).
+until ~a season of shared history exists (PRODUCT.md roadmap correlation notes).
 """
 
 import pandas as pd

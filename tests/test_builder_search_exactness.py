@@ -93,7 +93,7 @@ def _big_slate():
 
 
 def _favourite_slate(rng, n_games, legs_per_game):
-    """Favourite-heavy slate mirroring the REAL MLB structure (README §15.10).
+    """Favourite-heavy slate mirroring the REAL MLB structure (docs/ARCHITECTURE.md).
 
     The builder takes market-prob>=0.55 FAVOURITES, so every leg is a favourite
     priced from ~1.0x up. Crucially it reproduces the property that makes the
@@ -118,7 +118,7 @@ def _favourite_slate(rng, n_games, legs_per_game):
 
 def test_build_matches_pure_brute_force_favourite_heavy():
     """The payout axis on favourite-heavy inputs is where the tighter prunes live
-    (README §15.10). Verify they stay exact against the brute-force oracle. Legs
+    (docs/ARCHITECTURE.md). Verify they stay exact against the brute-force oracle. Legs
     cluster near 1.0x, so dedupe_by_price can legitimately collapse same-price
     legs; the oracle is run on the deduped legs to compare the SAME candidate set
     (dedupe losslessness is covered separately by dedupe_by_price's own docstring
@@ -147,7 +147,7 @@ def test_baseline_node_counts_are_captured():
 
 
 def test_both_axes_exhaustive_on_favourite_heavy_slate():
-    """Regression guard for README §15.10's core fix: on a REAL-shaped
+    """Regression guard for docs/ARCHITECTURE.md's core fix: on a REAL-shaped
     favourite-heavy slate (20 games x ~100 legs, priced like live MLB), BOTH axes
     must finish EXHAUSTIVELY — not merely under the node budget, but with
     truncated=False — at the production default top_n=10. Before the floor-aware

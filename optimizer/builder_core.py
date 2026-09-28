@@ -1,7 +1,7 @@
 """Pure, DB-free core for the low-risk parlay builder.
 
 MARKET-centric by design: every probability here comes from de-vigging the
-book's two-sided price, never from a model. README §15 explains why — the
+book's two-sided price, never from a model. PRODUCT.md explains why — the
 models lack per-game resolution and overstate heavy-favorite safety, so the
 book's de-vigged price is the best-calibrated probability available.
 """
@@ -67,7 +67,7 @@ def _base_leg(game_id, side, market_prob, line_value, american_odds, model_prob,
 # side -> (best-odds column, best-book column, consensus-odds column) for the
 # shopped payout price. market_prob is ALWAYS the consensus devig (ranking/floor
 # unchanged); only the payout price is shopped. A missing best_* (NULL / absent)
-# falls back to the consensus price for that side (README §15.9 item 3).
+# falls back to the consensus price for that side (docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md).
 _SHOP_COLS = {
     "over":  ("best_over_odds",  "best_over_book",  "over_odds"),
     "under": ("best_under_odds", "best_under_book", "under_odds"),
@@ -124,7 +124,7 @@ DEFAULT_TOLERANCE = 0.15
 DEFAULT_MIN_LEGS = 2
 DEFAULT_MAX_LEGS = 4
 # Hard ceiling on search work. The old uncapped player optimizer was OOM-killed
-# (SIGKILL) on 2026-07-18 — see README §11/§15. The game-structured search below
+# (SIGKILL) on 2026-07-18 — see docs/ARCHITECTURE.md/PRODUCT.md. The game-structured search below
 # makes blowing this budget very unlikely, but it stays as a guaranteed bound.
 MAX_NODES = 5_000_000
 
@@ -183,7 +183,7 @@ def same_game_pairs(team_legs, lift_fn, top_n=10, min_games=500, min_both=50,
     team_legs are already normalized, floor-passing builder team legs (favorite
     side, market_prob >= floor). For each game with both a first_inning_runs and
     an f5_runs leg, correct the joint by the empirically-measured same-game lift
-    (README §15.9 item 1). combined_odds is the product of the two shopped prices
+    (docs/superpowers/specs/2026-08-07-same-game-combos-design.md). combined_odds is the product of the two shopped prices
     — a NON-PLACEABLE reference (a book same-game parlay is repriced/restricted);
     the honest quantity is the lift-adjusted joint_prob.
 
@@ -269,7 +269,7 @@ def build(legs, target_payout=None, tolerance=DEFAULT_TOLERANCE, min_prob=None,
     which holds on uniform-vig book lines but not in general; it missed ~0.5% of
     optima on wide-vig synthetic slates.)
 
-    The two axes are exact DUALS (2026-07-22 work, README §15.10): each ranks by
+    The two axes are exact DUALS (2026-07-22 work, docs/ARCHITECTURE.md): each ranks by
     one quantity subject to a floor on the other, and each is bounded by the same
     three-part machinery with the roles of odds<->probability and
     target_payout<->min_prob swapped. Legs within a game are visited in DESCENDING

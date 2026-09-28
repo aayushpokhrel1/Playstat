@@ -104,7 +104,7 @@ class PmfPoint(BaseModel):
 
 
 class EdgeDistributionOut(BaseModel):
-    """Full predictive PMF for a current positive edge (README §14.5) — lets
+    """Full predictive PMF for a current positive edge (PRODUCT.md) — lets
     the dashboard draw the whole distribution behind an edge's model_prob,
     not just the single number. `family='gaussian'` (NBA) rows carry
     `pmf=None`; the bar chart is only meaningful for discrete (MLB) stats.
@@ -128,7 +128,7 @@ class ParlayLeg(BaseModel):
     # (it has `market` instead) -- required ints/strs here would raise a
     # pydantic ValidationError (a 500) the moment a team row entered
     # /parlay-recommendations' result window, same failure class as README
-    # §15.10 bug #5. Additive/widening only: every existing (player-kind)
+    # docs/ARCHITECTURE.md bug #5. Additive/widening only: every existing (player-kind)
     # consumer still gets both fields populated exactly as before.
     player_id: int | None = None
     player_name: str | None = None  # resolved at read time, not stored in legs JSONB
@@ -188,10 +188,10 @@ class BuilderLegOut(BaseModel):
     line: float
     odds: int
     market_prob: float
-    # Shown for context only — never used to rank or filter (README §15.3).
+    # Shown for context only — never used to rank or filter (PRODUCT.md).
     model_prob: float | None = None
     # Best-price bookmaker for this leg's shopped odds (line shopping, README
-    # §15.9 item 3). None when unshopped (consensus price) or for legacy rows
+    # docs/superpowers/specs/2026-08-06-line-shopping-best-price-design.md). None when unshopped (consensus price) or for legacy rows
     # predating the field. Additive/defaulted — Budgerr-safe.
     book: str | None = None
     # Additive team-name context (docs/superpowers/plans/2026-07-28-
@@ -202,7 +202,7 @@ class BuilderLegOut(BaseModel):
     away_team: str | None = None   # full name
     # "home" | "away" | None — which side the LEG'S player's (latest-pull)
     # team_id matches. None for team-market legs, and for a traded player
-    # whose stored team_id matches neither side (README §15.10 NBA note).
+    # whose stored team_id matches neither side (a traded-player caveat, first hit on NBA).
     player_team_side: str | None = None
 
 
@@ -226,7 +226,7 @@ class SavedBuilderParlayOut(BuilderParlayOut):
     parlay_id: int
     created_at: str
     target_payout: float
-    # Same-game combos (README §15.9 item 1) — correlation metadata read from the
+    # Same-game combos (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) — correlation metadata read from the
     # legs JSONB wrapper. `lift` is the empirically-measured same-game dependence
     # (observed / independent-product) at the pair's actual lines+sides, `lift_n`
     # the games it was measured over, `both_n` the joint "both hit" cell, and
@@ -241,7 +241,7 @@ class SavedBuilderParlayOut(BuilderParlayOut):
 
 class BuilderRecordOut(BaseModel):
     """Paper-trading builder record split by tier + target payout (README
-    §15) — dashboard-only; /bet-performance and BetPerformanceOut are
+    PRODUCT.md) — dashboard-only; /bet-performance and BetPerformanceOut are
     unchanged and still feed web/app/clv."""
 
     tier: str            # "player" for across_game, "team" for team_tier
@@ -250,13 +250,13 @@ class BuilderRecordOut(BaseModel):
     wins: int
     losses: int
     pushes: int
-    staked: float = 0.0  # sum of Kelly stakes (README §15.9 item 4); additive
+    staked: float = 0.0  # sum of Kelly stakes (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md); additive
     pnl: float
     roi: float           # pnl / staked (stake-weighted); 0.0 when staked == 0
 
 
 class BuilderRecordDailyOut(BaseModel):
-    """Per-day drill-down of the builder record (README §15 follow-on):
+    """Per-day drill-down of the builder record (PRODUCT.md follow-on):
     same settled-builder data as BuilderRecordOut, grouped by slate date
     (date(pr.created_at)) instead of tier/target_payout. Newest date first.
     """
@@ -266,7 +266,7 @@ class BuilderRecordDailyOut(BaseModel):
     wins: int
     losses: int
     pushes: int
-    staked: float = 0.0  # sum of Kelly stakes (README §15.9 item 4); additive
+    staked: float = 0.0  # sum of Kelly stakes (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md); additive
     pnl: float
     roi: float           # pnl / staked (stake-weighted); 0.0 when staked == 0
 
@@ -315,7 +315,7 @@ class LineMovementLegOut(BaseModel):
 class LineMovementOut(BaseModel):
     """Line movement between a card's build price and its last pre-start price.
 
-    NOT the closing line and NOT an edge/value claim (README §15.8 #2): the last
+    NOT the closing line and NOT an edge/value claim (PRODUCT.md guardrails #2): the last
     snapshot lands a median ~100 min before first pitch. `coverage` is the share
     of legs comparable at an UNCHANGED line — a low value is itself the finding.
     """

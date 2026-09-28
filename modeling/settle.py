@@ -1,4 +1,4 @@
-"""Paper-trading ledger — the system's real report card (README §14.1).
+"""Paper-trading ledger — the system's real report card (docs/ARCHITECTURE.md).
 
 The pipeline recommends parlays and flags edges but never recorded whether
 they'd have won. This module settles both against actual results once their
@@ -85,7 +85,7 @@ def leg_status(game_status, actual):
     - "void": the game IS final but there is no stat row for this leg (a
       scratched/DNP player prop, or a missing team-stat aggregate). Standard
       sportsbook rule: void the leg like a push rather than strand the
-      parlay pending forever (README §15.10 KNOWN ISSUE / §15.9 item 6).
+      parlay pending forever (docs/ARCHITECTURE.md KNOWN ISSUE / docs/ARCHITECTURE.md).
     - "ready": the game is final and a stat value exists — settle_leg can score it.
     """
     if game_status not in _FINAL_GAME_STATUSES:
@@ -191,7 +191,7 @@ def settle_builder_parlays(engine):
             return 0
 
         # stake: the Kelly-sized paper stake written by optimizer/stake.py
-        # (README §15.9 item 4). NULL means "not sized" (historical rows, or a
+        # (docs/superpowers/specs/2026-08-07-kelly-stake-sizing-design.md). NULL means "not sized" (historical rows, or a
         # slate the stake pass didn't touch) -> fall back to the prior flat 1.0u
         # so settle stays non-breaking for any unsized row.
         parsed = [(pid, ca, (1.0 if stake is None else float(stake)), _as_legs_list(raw))

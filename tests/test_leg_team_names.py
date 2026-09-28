@@ -33,7 +33,7 @@ def test_player_side_matches_away():
 
 
 def test_player_side_matches_neither_traded_player():
-    # players.team_id is a "latest pull" (README §15.10 NBA note): a traded
+    # players.team_id is a "latest pull" (a traded-player caveat, first hit on NBA): a traded
     # player's stored team can differ from the team they played for in this
     # game. Matching neither side must return None, not a wrong guess.
     assert api_main.player_side(999, 100, 200) is None

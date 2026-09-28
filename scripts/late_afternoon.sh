@@ -1,5 +1,5 @@
 #!/bin/bash
-# Playstat late-afternoon job — README §15.9 item 11 Option B + item 12.
+# Playstat late-afternoon job — docs/FINDINGS.md finding 3 Option B + item 12.
 #
 # Two launchd triggers share this script:
 #   com.playstat.mlb.late  17:30 ET  (full: odds -> confirmed-lineup builds)
@@ -88,7 +88,7 @@ _step odds_late "$PY" -m ingestion.odds_ingest --sport mlb --slate-window --not-
 rc=$?
 
 if [ "$ODDS_ONLY" = 1 ]; then
-	# Sharp-reference close snapshot (README §15.9 item 14e): Pinnacle prices
+	# Sharp-reference close snapshot (docs/FINDINGS.md finding 6): Pinnacle prices
 	# for TODAY'S CARD games only, via The Odds API. Key-gated and NON-FATAL —
 	# the SGO pull above is the product's own snapshot; this is the kill-test
 	# anchor. The module's own --budget-guard skips when the metered free tier

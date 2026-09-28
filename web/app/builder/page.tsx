@@ -32,7 +32,7 @@ const SPORT_CFG = {
       body: "NRFI/F5 lines rarely clear the safety floor, so an empty night here is normal — check back tomorrow, or after the next nightly build.",
     },
     emptyAll: null as null | { title: string; body: string },
-    // Same-game combos (README §15.9 item 1) — MLB only: NRFI and F5 are the
+    // Same-game combos (docs/superpowers/specs/2026-08-07-same-game-combos-design.md) — MLB only: NRFI and F5 are the
     // only paired team markets with enough shared history to measure.
     tier3: {
       heading: "Same-game combos (NRFI + F5)",
@@ -140,7 +140,7 @@ export default async function BuilderPage({
   let fetchError: string | null = null;
 
   // Same-game combos are MLB-only (NRFI/F5 are the only paired team markets with
-  // measurable shared history) — README §15.9 item 1.
+  // measurable shared history) — docs/superpowers/specs/2026-08-07-same-game-combos-design.md.
   const tier3 = sport === "mlb" ? SPORT_CFG.mlb.tier3 : null;
 
   try {

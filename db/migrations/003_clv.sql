@@ -1,4 +1,4 @@
--- Migration 003: closing-line-value (CLV) tracking (README §13.2).
+-- Migration 003: closing-line-value (CLV) tracking (docs/ARCHITECTURE.md).
 --
 -- CLV = (de-vigged implied probability of our side at the closing line)
 --     - (same at the line when the edge was first flagged).

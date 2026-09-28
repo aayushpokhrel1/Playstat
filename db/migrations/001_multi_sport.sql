@@ -1,4 +1,4 @@
--- Migration 001: multi-sport support (README §13.1) — MLB first, then NFL.
+-- Migration 001: multi-sport support (docs/ARCHITECTURE.md) — MLB first, then NFL.
 --
 -- Two changes:
 --   1. `sport` column on teams/players/games (existing rows are all 'nba').
@@ -30,7 +30,7 @@ ALTER TABLE games ALTER COLUMN sport DROP DEFAULT;
 CREATE INDEX idx_games_sport_date ON games(sport, date);
 
 -- player_game_stats: wide NBA columns -> long (stat_type, value).
--- usage_rate is dropped outright: never populated (README §11).
+-- usage_rate is dropped outright: never populated (docs/ARCHITECTURE.md).
 -- NULL stats are dropped: a NULL cell carried no information in wide format,
 -- and "which games already have stats" (db.game_ids_with_stats) only needs
 -- one row per game to exist.
