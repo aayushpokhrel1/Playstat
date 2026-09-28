@@ -34,6 +34,57 @@ unstarted at the 17:30 trigger is a weekday/Sunday blend - a single headline
 coverage figure badly understates the variance. Judge the confirmed-lineup job by
 day type, not by its average.
 
+## Platform assumptions
+
+**The live setup is macOS-only, but only at the scheduling layer.** This matters
+because the split is cleaner than it looks, and a port does not have to touch the
+pipeline.
+
+**Already portable, verified:** the entire Python core. CI runs the suite on
+`ubuntu-latest` on every push and PR, so ingestion, the builder, settlement and
+the API carry no macOS dependency. Timezone handling uses `zoneinfo`, which is
+correct everywhere once `tzdata` is installed (see Environment traps). The
+dashboard is plain Next.js.
+
+**macOS-bound, exhaustively:**
+
+| What | Where | Why it is bound |
+| --- | --- | --- |
+| The three job definitions | `~/Library/LaunchAgents/` (outside this repo) | launchd plists. No equivalent elsewhere; needs Task Scheduler on Windows or systemd timers on Linux. |
+| Hardcoded repo path | `scripts/daily_chain.sh:22`, `scripts/late_afternoon.sh:24`, `scripts/arm_wake.sh:35` | Defaults to `/Users/aayushpokhrel/dev/playstat`. Already overridable via `PLAYSTAT_REPO`. |
+| Interpreter path | `scripts/daily_chain.sh:23`, `scripts/late_afternoon.sh:25` | `$REPO/.venv/bin/python`. Windows venvs are `.venv/Scripts/python.exe`. |
+| Absolute tool paths | `scripts/daily_chain.sh:24` (`/usr/bin/curl`) | Deliberate: launchd's PATH is only `/usr/bin:/bin:/usr/sbin:/sbin`. The reason disappears with launchd, the paths still have to change. |
+| Wake arming, entirely | `scripts/arm_wake.sh` | Built on `pmset schedule wakeorpoweron` plus a NOPASSWD sudoers rule. macOS-specific by definition, and the script says so. |
+| BSD date | `scripts/arm_wake.sh:68` | `date -v+1d` is BSD-only; GNU date uses `date -d '+1 day'`. |
+| launchd self-disable | `ingestion/backfill.py:13,205` | The backfill job unloads its own plist via `launchctl unload` once every game has stats. The only launchd reference inside the Python tree. |
+| Shell | all three `scripts/*.sh` | bash. Fine on Windows through Git Bash or WSL, but Task Scheduler will not run them directly. |
+
+**Five behaviours the port must not lose.** Each exists because something went
+wrong without it, and each is easy to drop when rewriting a scheduler:
+
+1. **Self-heal on boot.** launchd fires a missed calendar trigger on *wake* but
+   not after a *boot* past the trigger time, which silently skipped a whole day
+   (2026-07-17: booted 08:47, the 08:30 run never happened, nothing noticed).
+   `daily_chain.sh` therefore also runs at load and on a poll, and decides for
+   itself whether the chain is due. Any replacement scheduler needs the
+   equivalent, or the same silent skip returns.
+2. **Suppress if late.** The 17:30 and 19:45 jobs no-op when they fire outside
+   their window, because a stale card or a post-game "closing" price is worse
+   than nothing. They deliberately cannot catch up.
+3. **Fan, not chain.** Wakes must be armed independently, never each from the
+   previous job. See The scheduled jobs.
+4. **Best-effort must never page.** The late jobs and the wake arm exit 0 on
+   failure by design. The morning card is the product; a missed confirmed card is
+   a missed improvement, not an outage, and nothing should block on an auth
+   prompt nobody is awake to answer.
+5. **The catch-up window is bounded.** Past `WINDOW_CLOSE` the slate is underway,
+   and rebuilding cards for games in progress is worse than skipping the day.
+
+**The honest limit on any laptop-based schedule**, macOS or not: a hardware wake
+only helps a machine that is asleep, present and on a network. Moving the
+schedule off the laptop is the only thing that actually closes the gap, and the
+existing wake-arm script says so itself.
+
 ## Verifying
 
 ```bash
@@ -41,7 +92,14 @@ python -m pytest
 ```
 
 ~305 cases. `optimizer/builder_core.py`'s tests are DB-free and run under `env -i`;
-CI runs the whole suite on Python 3.11.
+CI runs the whole suite on Python 3.11 on `ubuntu-latest`.
+
+**The suite needs the dependencies installed and `tzdata` present, and says
+neither clearly when they are missing.** A bare interpreter fails at *collection*
+with import errors, and a Windows interpreter without `tzdata` fails at collection
+with 29 `ZoneInfoNotFoundError`s that never mention timezones. Both look alarming
+and neither is a real failure. `env -i` also means `.env` is not consulted; see
+`tests/conftest.py` for the dummy values that let `ingestion/config.py` import.
 
 **Tests are necessary and have repeatedly not been sufficient here.** Every one of
 the following passed its unit tests and then broke in production, because the tests

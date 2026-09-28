@@ -58,7 +58,12 @@ Module map and how the pieces fit: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Running it
 
-Requires Python 3.11 and a PostgreSQL database.
+Requires Python 3.11 and a PostgreSQL database. **The pipeline itself is
+cross-platform** (CI runs it on Linux); only the scheduling layer is macOS-bound,
+so everything below works anywhere. On Windows, `tzdata` is required or the test
+suite will not even collect. See
+[docs/OPERATIONS.md](docs/OPERATIONS.md#platform-assumptions) for what is bound to
+macOS and what a port has to preserve.
 
 ```bash
 pip install -r requirements.txt
